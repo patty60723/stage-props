@@ -76,3 +76,4 @@ dialog .row{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
 .stagewrap.full #stageBox{flex:1;max-height:none}
 .stagewrap.full .selTools{display:flex}
 body.noscroll{overflow:hidden}
+.nudge{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px}

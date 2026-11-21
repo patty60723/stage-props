@@ -35,7 +35,7 @@ let S = CFG ? { currentEventId: lsGet(CUR_KEY), stages: [], props: [], events: [
 S.scenes = S.scenes || [];
 const cloud = { api: null, diff: null, code: null, ok: false, got: {}, stash: {}, fromCache: true, err: null, remote: { stages: [], props: [], events: [], scenes: [] } };
 const snap = s => JSON.parse(JSON.stringify({ stages: s.stages, props: s.props, events: s.events, scenes: s.scenes }));
-const ui = { tab: 'editor', sel: null, q: '', src: 'all', editProp: null, editStage: null, zoom: 1, full: false, view: 'home', outScene: '__all', sceneId: null, group: false };
+const ui = { tab: 'editor', sel: null, q: '', src: 'all', editProp: null, editStage: null, zoom: 1, nudge: 0.05, full: false, view: 'home', outScene: '__all', sceneId: null, group: false };
 
 /* 存檔：單機模式寫 localStorage；雲端模式把「和上次同步狀態的差異」送到 Firestore。回傳送出的寫入數 */
 function save() {
@@ -189,7 +189,7 @@ function renderEditor() {
   <div class="card stagewrap${ui.full ? ' full' : ''}">
     <div class="zoombar no-print"><button class="small" data-act="z-out" title="縮小">－</button><span id="zlabel">${Math.round(ui.zoom * 100)}%</span><button class="small" data-act="z-in" title="放大">＋</button><button class="small" data-act="z-fit">適合畫面</button><button class="small" data-act="z-full">${ui.full ? '✕ 離開全螢幕' : '⛶ 全螢幕'}</button></div>
     <div id="stageBox" style="--z:${ui.zoom}"></div>
-    <div class="selTools no-print"><button class="small" data-act="pl-rot" data-d="-15">↺ 15°</button><button class="small" data-act="pl-rot" data-d="15">↻ 15°</button><button class="small" data-act="pl-rot" data-d="90">↻ 90°</button><button class="small" data-act="pl-dup">複製</button><button class="small danger" data-act="pl-del">移除</button></div>
+    <div class="selTools no-print"><button class="small" data-act="pl-rot" data-d="-15">↺ 15°</button><button class="small" data-act="pl-rot" data-d="15">↻ 15°</button><button class="small" data-act="pl-rot" data-d="90">↻ 90°</button><button class="small" data-act="pl-dup">複製</button><button class="small danger" data-act="pl-del">移除</button>${nudgeHTML()}</div>
     <div class="legend">${Object.entries(SRC).map(([k, v]) => `<span><span class="dot ${k}"></span>${v.label}</span>`).join('')}<span class="muted">拖曳移動；拖紫色圓點旋轉；雙指或 Ctrl+滾輪縮放，拖空白處平移；方向鍵微調、R 旋轉、Delete 刪除</span></div>
   </div></div>`;
 }
@@ -213,19 +213,29 @@ function renderSelPanel() {
   if (!pl || !p) { el.innerHTML = `<h3>選取的道具</h3><div class="muted">點選舞台上的道具來編輯。</div>${summary}`; return; }
   el.innerHTML = `<h3>${esc(p.name)} <span class="tag ${p.source}">${SRC[p.source].label}</span></h3>
   <div class="grid2">
-    <label class="f">X（公尺，中心）<input type="number" step="0.05" data-pl="x" value="${r2(pl.x)}"></label>
-    <label class="f">Y（由後台起算）<input type="number" step="0.05" data-pl="y" value="${r2(pl.y)}"></label>
+    <label class="f">X（公尺，中心）<input type="number" step="0.01" data-pl="x" value="${r2(pl.x)}"></label>
+    <label class="f">Y（由後台起算）<input type="number" step="0.01" data-pl="y" value="${r2(pl.y)}"></label>
     <label class="f">旋轉（度）<input type="number" step="15" data-pl="rot" value="${pl.rot || 0}"></label>
   </div>
-  <div class="toolbar" style="margin-top:8px"><button class="small" data-act="pl-rot" data-d="-15">↺ 15°</button><button class="small" data-act="pl-rot" data-d="15">↻ 15°</button><button class="small" data-act="pl-rot" data-d="90">↻ 90°</button><button class="small" data-act="pl-dup">複製一份</button><button class="small danger" data-act="pl-del">從舞台移除</button></div>${summary}`;
+  <div class="toolbar" style="margin-top:8px"><button class="small" data-act="pl-rot" data-d="-15">↺ 15°</button><button class="small" data-act="pl-rot" data-d="15">↻ 15°</button><button class="small" data-act="pl-rot" data-d="90">↻ 90°</button><button class="small" data-act="pl-dup">複製一份</button><button class="small danger" data-act="pl-del">從舞台移除</button></div>${nudgeHTML()}${summary}`;
 }
 function bindStage() { renderStageBox(); }
 
 let drag = null;
+/* 放得越大，拖曳與方向鍵的最小單位越小，方便微調 */
+const snapStep = () => ui.zoom >= 4 ? 0.01 : ui.zoom >= 2 ? 0.02 : 0.05;
+const nudgeHTML = () => `<div class="nudge no-print"><button class="small" data-act="nudge" data-dx="-1" data-dy="0">←</button><button class="small" data-act="nudge" data-dx="0" data-dy="-1">↑</button><button class="small" data-act="nudge" data-dx="0" data-dy="1">↓</button><button class="small" data-act="nudge" data-dx="1" data-dy="0">→</button><select data-nudge title="每次移動多少">${[[0.01, '1 公分'], [0.05, '5 公分'], [0.25, '25 公分']].map(([v, l]) => `<option value="${v}"${ui.nudge === v ? ' selected' : ''}>${l}</option>`).join('')}</select><button class="small" data-act="z-sel">🔍 放大到選取</button></div>`;
+function focusSel() {                                         // 放大到選取的物件並置中
+  const sc = curScene(), pl = sc?.placements.find(x => x.id === ui.sel), box = document.getElementById('stageBox'), st = stageOf(curEvent().stageId); if (!pl || !box) return;
+  const p = propOf(pl.propId), W = st.w + 1.2, fs = Math.max(st.w, st.d) * 0.025;
+  setZoom(Math.min(10, Math.max(1, W / Math.max(2, Math.max(p.w, p.d) * 6))));
+  const ppu = box.querySelector('svg').getBoundingClientRect().width / W;
+  box.scrollLeft = (pl.x + 0.6) * ppu - box.clientWidth / 2; box.scrollTop = (pl.y + fs * 3.4) * ppu - box.clientHeight / 2;
+}
 /* ---- 縮放 / 平移 ---- */
 function setZoom(z, cx, cy) {
   const box = document.getElementById('stageBox'); if (!box) return;
-  z = Math.min(5, Math.max(1, z)); const r = box.getBoundingClientRect();
+  z = Math.min(10, Math.max(1, z)); const r = box.getBoundingClientRect();
   if (cx == null) { cx = r.left + r.width / 2; cy = r.top + r.height / 2; }
   const fx = (box.scrollLeft + cx - r.left) / box.scrollWidth, fy = (box.scrollTop + cy - r.top) / box.scrollHeight;
   ui.zoom = z; box.style.setProperty('--z', z);
@@ -277,7 +287,7 @@ document.addEventListener('pointermove', e => {
     drag.pl.rot = a; drag.g.setAttribute('transform', `translate(${drag.pl.x} ${drag.pl.y}) rotate(${a})`); return;
   }
   drag.pl.x = pt.x + drag.dx; drag.pl.y = pt.y + drag.dy;
-  let nx = Math.round(drag.pl.x * 20) / 20, ny = Math.round(drag.pl.y * 20) / 20; drag.pl.x = nx; drag.pl.y = ny; clampPl(drag.pl);
+  const sp = snapStep(); let nx = Math.round(drag.pl.x / sp) * sp, ny = Math.round(drag.pl.y / sp) * sp; drag.pl.x = nx; drag.pl.y = ny; clampPl(drag.pl);
   drag.g.setAttribute('transform', `translate(${drag.pl.x} ${drag.pl.y}) rotate(${drag.pl.rot || 0})`);
 });
 document.addEventListener('pointerup', () => {
@@ -288,7 +298,7 @@ document.addEventListener('pointerup', () => {
 document.addEventListener('keydown', e => {
   if (ui.tab !== 'editor' || !ui.sel || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName)) return;
   const sc = curScene(), pl = sc?.placements.find(x => x.id === ui.sel); if (!pl) return;
-  const step = e.shiftKey ? 0.25 : 0.05; let used = true;
+  const step = e.shiftKey ? 0.25 : snapStep(); let used = true;
   if (e.key === 'ArrowLeft') pl.x -= step; else if (e.key === 'ArrowRight') pl.x += step;
   else if (e.key === 'ArrowUp') pl.y -= step; else if (e.key === 'ArrowDown') pl.y += step;
   else if (e.key === 'r' || e.key === 'R') pl.rot = (((pl.rot || 0) + (e.shiftKey ? -15 : 15)) % 360 + 360) % 360;
@@ -460,6 +470,8 @@ document.addEventListener('click', e => {
     case 'sc-edit': return sceneDialog('edit');
     case 'sc-dup': if (!sc) return; { const c = JSON.parse(JSON.stringify(sc)); c.id = uid(); c.t = Date.now(); c.owner += '（複製）'; c.placements.forEach(p => p.id = uid()); S.scenes.push(c); ui.sceneId = c.id; ui.sel = null; save(); return render(); }
     case 'sc-del': if (sc && confirm(`刪除場景「${sceneLabel(sc)}」？`)) { S.scenes = S.scenes.filter(x => x !== sc); ui.sceneId = null; ui.sel = null; save(); render(); } return;
+    case 'nudge': { const pl = sc?.placements.find(x => x.id === ui.sel); if (!pl) return; pl.x += +t.dataset.dx * ui.nudge; pl.y += +t.dataset.dy * ui.nudge; clampPl(pl); save(); return renderStageBox(); }
+    case 'z-sel': return focusSel();
     case 'z-in': return setZoom(ui.zoom * 1.25);
     case 'z-out': return setZoom(ui.zoom / 1.25);
     case 'z-fit': { setZoom(1); const b = document.getElementById('stageBox'); if (b) { b.scrollLeft = 0; b.scrollTop = 0; } return; }
@@ -498,6 +510,7 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('change', e => {
   const t = e.target;
+  if (t.dataset.nudge !== undefined) ui.nudge = parseFloat(t.value);
   if (t.id === 'sceneSel') { ui.outScene = t.value; render(); }
   if (t.id === 'groupChk') { ui.group = t.checked; render(); }
   if (t.id === 'importFile' && t.files[0]) {

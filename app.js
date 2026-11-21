@@ -35,7 +35,7 @@ let S = CFG ? { currentEventId: lsGet(CUR_KEY), stages: [], props: [], events: [
 S.scenes = S.scenes || [];
 const cloud = { api: null, diff: null, code: null, ok: false, got: {}, stash: {}, fromCache: true, err: null, remote: { stages: [], props: [], events: [], scenes: [] } };
 const snap = s => JSON.parse(JSON.stringify({ stages: s.stages, props: s.props, events: s.events, scenes: s.scenes }));
-const ui = { tab: 'editor', sel: null, q: '', src: 'all', editProp: null, editStage: null, outScene: '__all', sceneId: null, group: false };
+const ui = { tab: 'editor', sel: null, q: '', src: 'all', editProp: null, editStage: null, view: 'home', outScene: '__all', sceneId: null, group: false };
 
 /* 存檔：單機模式寫 localStorage；雲端模式把「和上次同步狀態的差異」送到 Firestore。回傳送出的寫入數 */
 function save() {
@@ -108,21 +108,32 @@ function stageSVG(ev, sc, opt = {}) {
 
 /* ---------- 版面 ---------- */
 function renderHeader() {
-  const sel = document.getElementById('eventSelect');
-  sel.innerHTML = S.events.length
-    ? S.events.slice().sort((a, b) => (b.date || '').localeCompare(a.date || '')).map(e => `<option value="${e.id}"${e.id === S.currentEventId ? ' selected' : ''}>${esc(fmtEv(e))}</option>`).join('')
-    : '<option>（尚無事件，請按「＋ 新事件」）</option>';
   const cb = document.getElementById('cloudBox');
   if (cb) cb.innerHTML = CFG && cloud.code ? `<span class="muted" title="${cloud.err ? esc(cloud.err) : ''}">☁ 班級 ${esc(cloud.code)}・${cloud.err ? '⚠ 無法存取雲端' : (!navigator.onLine || cloud.fromCache ? '連線中／離線' : '已同步')}</span> <button data-act="share">分享連結</button> <button data-act="switch-code">換代碼</button>` : '';
+  document.getElementById('tabs').hidden = !(ui.view === 'event' && curEvent());
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === ui.tab));
 }
 function render() {
-  if (!curEvent() && S.events.length) S.currentEventId = S.events[0].id;
+  if (ui.view === 'event' && !curEvent()) ui.view = 'home';
   renderHeader();
   const m = document.getElementById('main');
   if (CFG && !cloud.ok) { m.innerHTML = `<div class="card empty">${cloud.err ? '無法連線到雲端：' + esc(cloud.err) : '連線中…'}</div>`; return; }
-  m.innerHTML = ({ editor: renderEditor, props: renderProps, stages: renderStages, output: renderOutput })[ui.tab]();
+  if (ui.view === 'home') { m.innerHTML = renderHome(); return; }
+  m.innerHTML = eventBar() + ({ editor: renderEditor, props: renderProps, output: renderOutput })[ui.tab]();
   if (ui.tab === 'editor') { bindStage(); renderPropList(); }
+}
+
+/* ---------- 首頁：事件與舞台（上一層）---------- */
+function renderHome() {
+  const evs = S.events.slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const cards = evs.length ? evs.map(e => { const st = stageOf(e.stageId), n = scenesOf(e.id).length;
+    return `<div class="evcard"><div><b>${esc(e.name)}</b><div class="muted">${esc(e.date || '未定日期')}・${esc(st ? st.name + ' ' + st.w + '×' + st.d + 'm' : '（舞台已刪除）')}・${n} 個場景</div></div><button class="primary" data-act="ev-open" data-id="${e.id}">開啟</button></div>`; }).join('')
+    : '<div class="muted">還沒有事件。一個「事件」＝一個呈現日期＋一個舞台；之後有新的演出日期或場地，再新增就好。</div>';
+  return `<div class="card"><div class="toolbar"><h2 style="margin:0;flex:1">事件</h2><button class="primary" data-act="ev-new">＋ 新事件</button></div>${cards}</div>${renderStages()}`;
+}
+function eventBar() {
+  const e = curEvent(), st = stageOf(e.stageId);
+  return `<div class="card no-print crumb"><button class="small" data-act="home">← 所有事件</button><div class="crumbt"><b>${esc(e.name)}</b> <span class="muted">${esc(e.date || '未定日期')}・${esc(st ? st.name + ' ' + st.w + '×' + st.d + 'm' : '（舞台已刪除）')}</span></div><button class="small" data-act="ev-edit">編輯事件</button><button class="small" data-act="ev-dup">複製事件</button><button class="small danger" data-act="ev-del">刪除事件</button></div>`;
 }
 
 /* ---------- 排列舞台 ---------- */
@@ -321,7 +332,7 @@ function eventDialog(mode) {
   document.getElementById('evForm').onsubmit = ev => {
     const f = new FormData(ev.target);
     if (mode === 'edit') { Object.assign(cur, { name: f.get('name'), date: f.get('date'), stageId: f.get('stage') }); }
-    else { const n = { id: uid(), name: f.get('name'), date: f.get('date'), stageId: f.get('stage'), migrated: true }; S.events.push(n); S.currentEventId = n.id; ui.sel = null; ui.sceneId = null; }
+    else { const n = { id: uid(), name: f.get('name'), date: f.get('date'), stageId: f.get('stage'), migrated: true }; S.events.push(n); S.currentEventId = n.id; ui.sel = null; ui.sceneId = null; ui.view = 'event'; ui.tab = 'editor'; }
     save(); render();
   };
 }
@@ -353,12 +364,14 @@ document.addEventListener('click', e => {
   if (t.dataset.src) { ui.src = t.dataset.src; return renderPropList(); }
   const ev = curEvent(), sc = curScene(), id = t.dataset.id;
   switch (t.dataset.act) {
-    case 'ev-new': if (!S.stages.length) { alert('請先到「舞台規格」新增舞台'); ui.tab = 'stages'; return render(); } return eventDialog('new');
+    case 'home': e.preventDefault(); ui.view = 'home'; ui.sel = null; return render();
+    case 'ev-open': S.currentEventId = id; ui.view = 'event'; ui.tab = 'editor'; ui.sceneId = null; ui.sel = null; save(); return render();
+    case 'ev-new': if (!S.stages.length) { alert('請先在下方新增舞台規格'); return; } return eventDialog('new');
     case 'ev-edit': return eventDialog('edit');
     case 'ev-dup': if (!ev) return; { const n = JSON.parse(JSON.stringify(ev)); n.id = uid(); n.name += '（複製）'; n.migrated = true; S.events.push(n);
       for (const x of scenesOf(ev.id)) { const c = JSON.parse(JSON.stringify(x)); c.id = uid(); c.eventId = n.id; c.placements.forEach(p => p.id = uid()); S.scenes.push(c); }
-      S.currentEventId = n.id; ui.sceneId = null; save(); return render(); }
-    case 'ev-del': if (ev && confirm(`刪除事件「${ev.name}」？（道具庫不受影響）`)) { S.events = S.events.filter(x => x !== ev); S.scenes = S.scenes.filter(x => x.eventId !== ev.id); S.currentEventId = S.events[0]?.id || null; ui.sel = null; save(); render(); } return;
+      S.currentEventId = n.id; ui.sceneId = null; ui.view = 'event'; save(); return render(); }
+    case 'ev-del': if (ev && confirm(`刪除事件「${ev.name}」？（道具庫不受影響）`)) { S.events = S.events.filter(x => x !== ev); S.scenes = S.scenes.filter(x => x.eventId !== ev.id); S.currentEventId = null; ui.view = 'home'; ui.sel = null; save(); render(); } return;
     case 'add-pl': { if (!sc) return alert('請先新增你的場景'); const st = stageOf(ev.stageId); const n = sc.placements.length; const pl = { id: uid(), t: Date.now(), propId: id, x: r2(st.w / 2 + (n % 5 - 2) * 0.3), y: r2(st.d / 2 + (n % 5 - 2) * 0.3), rot: 0 }; sc.placements.push(pl); ui.sel = pl.id; save(); return renderStageBox(); }
     case 'pl-rot': { const pl = sc?.placements.find(x => x.id === ui.sel); if (pl) { pl.rot = ((pl.rot || 0) + 90) % 360; save(); renderStageBox(); } return; }
     case 'pl-dup': { const pl = sc?.placements.find(x => x.id === ui.sel); if (pl) { const n = { ...pl, id: uid(), t: Date.now(), x: pl.x + .3, y: pl.y + .3 }; clampPl(n); sc.placements.push(n); ui.sel = n.id; save(); renderStageBox(); } return; }
@@ -407,7 +420,6 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('change', e => {
   const t = e.target;
-  if (t.id === 'eventSelect') { S.currentEventId = t.value; ui.sel = null; ui.sceneId = null; save(); render(); }
   if (t.id === 'sceneSel') { ui.outScene = t.value; render(); }
   if (t.id === 'groupChk') { ui.group = t.checked; render(); }
   if (t.id === 'importFile' && t.files[0]) {
@@ -464,7 +476,8 @@ function onError(err) {
 function refreshRemote() {
   renderHeader();
   const act = document.activeElement, inForm = !!act?.closest?.('main form, #selPanel');
-  if (!curEvent() && S.events.length) S.currentEventId = S.events[0].id;
+  if (ui.view === 'home') { if (!inForm) render(); return; }
+  if (!curEvent()) { render(); return; }
   if (ui.tab === 'editor') {
     const box = document.getElementById('stageBox');
     if (!curEvent() || !curScene() || !box) { if (!inForm) render(); return; }

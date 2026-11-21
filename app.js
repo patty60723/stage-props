@@ -306,7 +306,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'ArrowLeft') pl.x -= step; else if (e.key === 'ArrowRight') pl.x += step;
   else if (e.key === 'ArrowUp') pl.y -= step; else if (e.key === 'ArrowDown') pl.y += step;
   else if (e.key === 'r' || e.key === 'R') pl.rot = (((pl.rot || 0) + (e.shiftKey ? -15 : 15)) % 360 + 360) % 360;
-  else if (e.key === 'Delete' || e.key === 'Backspace') { sc.placements = sc.placements.filter(x => x !== pl); ui.sel = null; }
+  else if (e.key === 'Delete' || e.key === 'Backspace') { if (confirm(`從舞台移除「${propOf(pl.propId)?.name || '這個道具'}」？`)) { sc.placements = sc.placements.filter(x => x !== pl); ui.sel = null; } }
   else used = false;
   if (used) { e.preventDefault(); if (ui.sel) clampPl(pl); save(); renderStageBox(); }
 });
@@ -457,23 +457,23 @@ document.addEventListener('click', e => {
     case 'ev-dup': if (!ev) return; { const n = JSON.parse(JSON.stringify(ev)); n.id = uid(); n.name += '（複製）'; n.migrated = true; S.events.push(n);
       for (const x of scenesOf(ev.id)) { const c = JSON.parse(JSON.stringify(x)); c.id = uid(); c.eventId = n.id; c.placements.forEach(p => p.id = uid()); S.scenes.push(c); }
       S.currentEventId = n.id; ui.sceneId = null; ui.view = 'event'; save(); return render(); }
-    case 'ev-del': if (ev && confirm(`刪除事件「${ev.name}」？（道具庫不受影響）`)) { S.events = S.events.filter(x => x !== ev); S.scenes = S.scenes.filter(x => x.eventId !== ev.id); S.currentEventId = null; ui.view = 'home'; ui.sel = null; save(); render(); } return;
+    case 'ev-del': if (ev && confirm(`刪除事件「${ev.name}」？\n底下 ${scenesOf(ev.id).length} 個場景（所有人的排法）會一併刪除，且無法復原。\n（道具庫與舞台規格不受影響）`)) { S.events = S.events.filter(x => x !== ev); S.scenes = S.scenes.filter(x => x.eventId !== ev.id); S.currentEventId = null; ui.view = 'home'; ui.sel = null; save(); render(); } return;
     case 'add-pl': { if (!sc) return alert('請先新增你的場景'); const st = stageOf(ev.stageId); const n = sc.placements.length; const pl = { id: uid(), t: Date.now(), propId: id, x: r2(st.w / 2 + (n % 5 - 2) * 0.3), y: r2(st.d / 2 + (n % 5 - 2) * 0.3), rot: 0 }; sc.placements.push(pl); ui.sel = pl.id; save(); return renderStageBox(); }
     case 'pl-rot': { const pl = sc?.placements.find(x => x.id === ui.sel); if (pl) { pl.rot = (((pl.rot || 0) + (+t.dataset.d || 90)) % 360 + 360) % 360; save(); renderStageBox(); } return; }
     case 'pl-dup': { const pl = sc?.placements.find(x => x.id === ui.sel); if (pl) { const n = { ...pl, id: uid(), t: Date.now(), x: pl.x + .3, y: pl.y + .3 }; clampPl(n); sc.placements.push(n); ui.sel = n.id; save(); renderStageBox(); } return; }
-    case 'pl-del': if (sc) sc.placements = sc.placements.filter(x => x.id !== ui.sel); ui.sel = null; save(); return renderStageBox();
+    case 'pl-del': { const pl = sc?.placements.find(x => x.id === ui.sel); if (!pl || !confirm(`從舞台移除「${propOf(pl.propId)?.name || '這個道具'}」？`)) return; sc.placements = sc.placements.filter(x => x !== pl); ui.sel = null; save(); return renderStageBox(); }
     case 'edit-prop': ui.editProp = id; return render();
     case 'cancel-prop': ui.editProp = null; return render();
-    case 'del-prop': { const used = S.scenes.filter(x => x.placements.some(p => p.propId === id)).length; if (confirm(`刪除道具「${propOf(id).name}」？` + (used ? `\n它會同時從 ${used} 個場景的舞台上移除。` : ''))) { S.props = S.props.filter(p => p.id !== id); S.scenes.forEach(x => x.placements = x.placements.filter(p => p.propId !== id)); save(); render(); } return; }
+    case 'del-prop': { const used = S.scenes.filter(x => x.placements.some(p => p.propId === id)).length; if (confirm(`刪除道具「${propOf(id).name}」？無法復原。` + (used ? `\n它會同時從 ${used} 個場景的舞台上移除。` : ''))) { S.props = S.props.filter(p => p.id !== id); S.scenes.forEach(x => x.placements = x.placements.filter(p => p.propId !== id)); save(); render(); } return; }
     case 'edit-stage': ui.editStage = id; return render();
     case 'cancel-stage': ui.editStage = null; return render();
-    case 'del-stage': { if (S.events.some(x => x.stageId === id)) return alert('有事件正在使用這個舞台，無法刪除。'); S.stages = S.stages.filter(s => s.id !== id); save(); return render(); }
+    case 'del-stage': { if (S.events.some(x => x.stageId === id)) return alert('有事件正在使用這個舞台，無法刪除。'); if (!confirm(`刪除舞台「${stageOf(id)?.name}」？無法復原。`)) return; S.stages = S.stages.filter(s => s.id !== id); save(); return render(); }
     case 'sc-new': return sceneDialog('new');
     case 'sc-move': { if (!sc) return; const l = scenesOf(ev.id), i = l.indexOf(sc), j = i + (+t.dataset.d); if (j < 0 || j >= l.length) return;
       l.splice(i, 1); l.splice(j, 0, sc); l.forEach((x, k) => x.t = (k + 1) * 1000); save(); return render(); }
     case 'sc-edit': return sceneDialog('edit');
     case 'sc-dup': if (!sc) return; { const c = JSON.parse(JSON.stringify(sc)); c.id = uid(); c.t = Date.now(); c.owner += '（複製）'; c.placements.forEach(p => p.id = uid()); S.scenes.push(c); ui.sceneId = c.id; ui.sel = null; save(); return render(); }
-    case 'sc-del': if (sc && confirm(`刪除場景「${sceneLabel(sc)}」？`)) { S.scenes = S.scenes.filter(x => x !== sc); ui.sceneId = null; ui.sel = null; save(); render(); } return;
+    case 'sc-del': if (sc && confirm(`刪除場景「${sceneLabel(sc)}」？\n裡面 ${sc.placements.length} 件道具的排法會一併刪除，且無法復原。`)) { S.scenes = S.scenes.filter(x => x !== sc); ui.sceneId = null; ui.sel = null; save(); render(); } return;
     case 'nudge': { const pl = sc?.placements.find(x => x.id === ui.sel); if (!pl) return; pl.x += +t.dataset.dx * ui.nudge; pl.y += +t.dataset.dy * ui.nudge; clampPl(pl); save(); return renderStageBox(); }
     case 'z-sel': return focusSel();
     case 'z-in': return setZoom(ui.zoom * 1.25);

@@ -142,14 +142,14 @@ function eventBar() {
 /* ---------- 排列舞台 ---------- */
 function sceneChipsHTML() {
   const ev = curEvent(), cs = curScene(), l = ev ? scenesOf(ev.id) : [];
-  return l.length ? l.map(x => `<button data-scene="${x.id}" class="${cs && cs.id === x.id ? 'on' : ''}">${esc(sceneLabel(x))}</button>`).join('') : '<span class="muted">尚無場景</span>';
+  return l.length ? l.map((x, i) => `<button data-scene="${x.id}" class="${cs && cs.id === x.id ? 'on' : ''}">${i + 1}. ${esc(sceneLabel(x))}</button>`).join('') : '<span class="muted">尚無場景</span>';
 }
 function renderEditor() {
   const ev = curEvent();
   if (!ev) return `<div class="card empty">還沒有事件。<br>一個「事件」＝一個呈現日期＋一個舞台，之後有新的演出日期或場地，再新增就好。<br><br><button class="primary" data-act="ev-new">＋ 新事件</button></div>`;
   const sc = curScene();
-  const bar = `<div class="card scenebar"><h3>場景（每人一個）</h3><div class="chips" id="sceneChips">${sceneChipsHTML()}</div>
-    <div class="toolbar"><button class="primary small" data-act="sc-new">＋ 新增場景</button><button class="small" data-act="sc-edit">改名</button><button class="small" data-act="sc-dup">複製場景</button><button class="small danger" data-act="sc-del">刪除場景</button></div>
+  const bar = `<div class="card scenebar"><h3>場景（每人一個，順序＝出場順序）</h3><div class="chips" id="sceneChips">${sceneChipsHTML()}</div>
+    <div class="toolbar"><button class="primary small" data-act="sc-new">＋ 新增場景</button><button class="small" data-act="sc-move" data-d="-1">◀ 前移</button><button class="small" data-act="sc-move" data-d="1">後移 ▶</button><button class="small" data-act="sc-edit">改名</button><button class="small" data-act="sc-dup">複製場景</button><button class="small danger" data-act="sc-del">刪除場景</button></div>
     <div class="muted">每位同學各自有一個場景（自己的舞台排法）。點名字切換；請只改自己的。</div></div>`;
   if (!sc) return bar + `<div class="card empty">這個事件還沒有場景。<br>請新增你自己的場景，就能開始排你的舞台。<br><br><button class="primary" data-act="sc-new">＋ 新增我的場景</button></div>`;
   return bar + `<div class="editor">
@@ -395,6 +395,8 @@ document.addEventListener('click', e => {
     case 'cancel-stage': ui.editStage = null; return render();
     case 'del-stage': { if (S.events.some(x => x.stageId === id)) return alert('有事件正在使用這個舞台，無法刪除。'); S.stages = S.stages.filter(s => s.id !== id); save(); return render(); }
     case 'sc-new': return sceneDialog('new');
+    case 'sc-move': { if (!sc) return; const l = scenesOf(ev.id), i = l.indexOf(sc), j = i + (+t.dataset.d); if (j < 0 || j >= l.length) return;
+      l.splice(i, 1); l.splice(j, 0, sc); l.forEach((x, k) => x.t = (k + 1) * 1000); save(); return render(); }
     case 'sc-edit': return sceneDialog('edit');
     case 'sc-dup': if (!sc) return; { const c = JSON.parse(JSON.stringify(sc)); c.id = uid(); c.t = Date.now(); c.owner += '（複製）'; c.placements.forEach(p => p.id = uid()); S.scenes.push(c); ui.sceneId = c.id; ui.sel = null; save(); return render(); }
     case 'sc-del': if (sc && confirm(`刪除場景「${sceneLabel(sc)}」？`)) { S.scenes = S.scenes.filter(x => x !== sc); ui.sceneId = null; ui.sel = null; save(); render(); } return;

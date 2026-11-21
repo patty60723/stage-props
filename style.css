@@ -66,3 +66,4 @@ dialog .row{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
 .crumb{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 14px}
 .crumbt{flex:1;min-width:160px}
 [hidden]{display:none!important}
+.stagewrap .rot{cursor:crosshair}

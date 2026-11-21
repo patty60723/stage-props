@@ -94,12 +94,15 @@ function stageSVG(ev, sc, opt = {}) {
     const shape = p.source === 'actor'
       ? `<ellipse rx="${p.w / 2}" ry="${p.d / 2}" fill="${c}" fill-opacity=".3" stroke="${c}" stroke-width="${fs * (sel ? .3 : .15)}"${sel ? ` stroke-dasharray="${fs * .4} ${fs * .3}"` : ''}/>`
       : `<rect x="${-p.w / 2}" y="${-p.d / 2}" width="${p.w}" height="${p.d}" rx="${fs * .15}" fill="${c}" fill-opacity=".25" stroke="${c}" stroke-width="${fs * (sel ? .3 : .15)}"${sel ? ` stroke-dasharray="${fs * .4} ${fs * .3}"` : ''}/>`;
+    let handle = '';
+    if (sel) { const rr = (w + 2 * m) * 0.03, ty = -p.d / 2 - rr * 2.2;   // 旋轉把手：拖曳即可轉
+      handle = `<line x1="0" y1="${-p.d / 2}" x2="0" y2="${ty}" stroke="#7c3aed" stroke-width="${fs * .12}"/><circle class="rot" cx="0" cy="${ty}" r="${rr * 1.8}" fill="transparent"/><circle cx="0" cy="${ty}" r="${rr}" fill="#7c3aed" stroke="#fff" stroke-width="${fs * .1}" pointer-events="none"/>`; }
     const maxc = Math.max(2, Math.floor(Math.max(p.w, p.d) / fs)) ;
     const nm = p.name.length > maxc ? p.name.slice(0, maxc - 1) + '…' : p.name;
     const ow = p.source !== 'theatre' && p.owner && p.owner !== p.name ? p.owner : '';
     const ot = ow ? (ow.length > maxc ? ow.slice(0, maxc - 1) + '…' : ow) : '';
     const text = `<g transform="translate(${pl.x} ${pl.y})" pointer-events="none"><text text-anchor="middle" font-size="${fs}" fill="#111827" y="${ot ? -fs * .1 : fs * .35}">${esc(nm)}</text>${ot ? `<text text-anchor="middle" font-size="${fs * .8}" fill="#4b5563" y="${fs * .95}">${esc(ot)}</text>` : ''}</g>`;
-    g += `<g><g class="g" data-pid="${pl.id}" transform="translate(${pl.x} ${pl.y}) rotate(${pl.rot || 0})"><title>${esc(p.name)}</title>${shape}</g>${text}</g>`;
+    g += `<g><g class="g" data-pid="${pl.id}" transform="translate(${pl.x} ${pl.y}) rotate(${pl.rot || 0})"><title>${esc(p.name)}</title>${shape}${handle}</g>${text}</g>`;
   }
   const vb = [-m, -fs * 3.4, w + 2 * m, d + fs * 7.4];
   const size = opt.px ? ` width="${opt.px}" height="${Math.round(opt.px * vb[3] / vb[2])}"` : '';
@@ -160,7 +163,7 @@ function renderEditor() {
     <div class="card" id="selPanel"></div>
   </div>
   <div class="card stagewrap"><div id="stageBox"></div>
-    <div class="legend">${Object.entries(SRC).map(([k, v]) => `<span><span class="dot ${k}"></span>${v.label}</span>`).join('')}<span class="muted">拖曳移動；選取後可用方向鍵微調、Delete 刪除</span></div>
+    <div class="legend">${Object.entries(SRC).map(([k, v]) => `<span><span class="dot ${k}"></span>${v.label}</span>`).join('')}<span class="muted">拖曳移動；選取後拖曳紫色圓點旋轉；方向鍵微調、R 旋轉、Delete 刪除</span></div>
   </div></div>`;
 }
 function renderPropList() {
@@ -187,7 +190,7 @@ function renderSelPanel() {
     <label class="f">Y（由後台起算）<input type="number" step="0.05" data-pl="y" value="${r2(pl.y)}"></label>
     <label class="f">旋轉（度）<input type="number" step="15" data-pl="rot" value="${pl.rot || 0}"></label>
   </div>
-  <div class="toolbar" style="margin-top:8px"><button class="small" data-act="pl-rot">↻ 90°</button><button class="small" data-act="pl-dup">複製一份</button><button class="small danger" data-act="pl-del">從舞台移除</button></div>${summary}`;
+  <div class="toolbar" style="margin-top:8px"><button class="small" data-act="pl-rot" data-d="-15">↺ 15°</button><button class="small" data-act="pl-rot" data-d="15">↻ 15°</button><button class="small" data-act="pl-rot" data-d="90">↻ 90°</button><button class="small" data-act="pl-dup">複製一份</button><button class="small danger" data-act="pl-del">從舞台移除</button></div>${summary}`;
 }
 function bindStage() { renderStageBox(); }
 
@@ -197,6 +200,10 @@ function clampPl(pl) { const st = stageOf(curEvent().stageId); pl.x = Math.min(s
 document.addEventListener('pointerdown', e => {
   const g = e.target.closest?.('#stageBox .g'); if (!g) return;
   const sc = curScene(), pl = sc?.placements.find(x => x.id === g.dataset.pid); if (!pl) return;
+  if (e.target.closest('.rot') && ui.sel === pl.id) {
+    drag = { rot: true, pl, g, svg: g.ownerSVGElement, moved: false };
+    drag.svg.setPointerCapture?.(e.pointerId); e.preventDefault(); return;
+  }
   ui.sel = pl.id; renderStageBox();
   const g2 = document.querySelector(`#stageBox .g[data-pid="${pl.id}"]`), svg = g2.ownerSVGElement, pt = svgPoint(svg, e);
   drag = { pl, g: g2, svg, dx: pl.x - pt.x, dy: pl.y - pt.y, moved: false };
@@ -205,6 +212,10 @@ document.addEventListener('pointerdown', e => {
 document.addEventListener('pointermove', e => {
   if (!drag) return;
   const pt = svgPoint(drag.svg, e); drag.moved = true;
+  if (drag.rot) {
+    let a = Math.round(Math.atan2(pt.x - drag.pl.x, -(pt.y - drag.pl.y)) * 180 / Math.PI / 5) * 5; a = ((a % 360) + 360) % 360;
+    drag.pl.rot = a; drag.g.setAttribute('transform', `translate(${drag.pl.x} ${drag.pl.y}) rotate(${a})`); return;
+  }
   drag.pl.x = pt.x + drag.dx; drag.pl.y = pt.y + drag.dy;
   let nx = Math.round(drag.pl.x * 20) / 20, ny = Math.round(drag.pl.y * 20) / 20; drag.pl.x = nx; drag.pl.y = ny; clampPl(drag.pl);
   drag.g.setAttribute('transform', `translate(${drag.pl.x} ${drag.pl.y}) rotate(${drag.pl.rot || 0})`);
@@ -220,6 +231,7 @@ document.addEventListener('keydown', e => {
   const step = e.shiftKey ? 0.25 : 0.05; let used = true;
   if (e.key === 'ArrowLeft') pl.x -= step; else if (e.key === 'ArrowRight') pl.x += step;
   else if (e.key === 'ArrowUp') pl.y -= step; else if (e.key === 'ArrowDown') pl.y += step;
+  else if (e.key === 'r' || e.key === 'R') pl.rot = (((pl.rot || 0) + (e.shiftKey ? -15 : 15)) % 360 + 360) % 360;
   else if (e.key === 'Delete' || e.key === 'Backspace') { sc.placements = sc.placements.filter(x => x !== pl); ui.sel = null; }
   else used = false;
   if (used) { e.preventDefault(); if (ui.sel) clampPl(pl); save(); renderStageBox(); }
@@ -373,7 +385,7 @@ document.addEventListener('click', e => {
       S.currentEventId = n.id; ui.sceneId = null; ui.view = 'event'; save(); return render(); }
     case 'ev-del': if (ev && confirm(`刪除事件「${ev.name}」？（道具庫不受影響）`)) { S.events = S.events.filter(x => x !== ev); S.scenes = S.scenes.filter(x => x.eventId !== ev.id); S.currentEventId = null; ui.view = 'home'; ui.sel = null; save(); render(); } return;
     case 'add-pl': { if (!sc) return alert('請先新增你的場景'); const st = stageOf(ev.stageId); const n = sc.placements.length; const pl = { id: uid(), t: Date.now(), propId: id, x: r2(st.w / 2 + (n % 5 - 2) * 0.3), y: r2(st.d / 2 + (n % 5 - 2) * 0.3), rot: 0 }; sc.placements.push(pl); ui.sel = pl.id; save(); return renderStageBox(); }
-    case 'pl-rot': { const pl = sc?.placements.find(x => x.id === ui.sel); if (pl) { pl.rot = ((pl.rot || 0) + 90) % 360; save(); renderStageBox(); } return; }
+    case 'pl-rot': { const pl = sc?.placements.find(x => x.id === ui.sel); if (pl) { pl.rot = (((pl.rot || 0) + (+t.dataset.d || 90)) % 360 + 360) % 360; save(); renderStageBox(); } return; }
     case 'pl-dup': { const pl = sc?.placements.find(x => x.id === ui.sel); if (pl) { const n = { ...pl, id: uid(), t: Date.now(), x: pl.x + .3, y: pl.y + .3 }; clampPl(n); sc.placements.push(n); ui.sel = n.id; save(); renderStageBox(); } return; }
     case 'pl-del': if (sc) sc.placements = sc.placements.filter(x => x.id !== ui.sel); ui.sel = null; save(); return renderStageBox();
     case 'edit-prop': ui.editProp = id; return render();

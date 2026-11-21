@@ -33,7 +33,8 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { } };
 let legacy = null; try { legacy = JSON.parse(lsGet(KEY)); } catch { }
 let S = CFG ? { currentEventId: lsGet(CUR_KEY), stages: [], props: [], events: [], scenes: [] } : (legacy || seed());
 S.scenes = S.scenes || [];
-const cloud = { api: null, diff: null, code: null, ok: false, got: {}, stash: {}, fromCache: true, err: null, remote: { stages: [], props: [], events: [], scenes: [] } };
+const LAST_KEY = 'stage-props-last';
+const cloud = { server: {}, giveUp: false, api: null, diff: null, code: null, ok: false, got: {}, stash: {}, fromCache: true, err: null, remote: { stages: [], props: [], events: [], scenes: [] } };
 const snap = s => JSON.parse(JSON.stringify({ stages: s.stages, props: s.props, events: s.events, scenes: s.scenes }));
 const ui = { tab: 'editor', sel: null, q: '', src: 'all', editProp: null, editStage: null, zoom: 1, nudge: 0.05, full: false, view: 'home', outScene: '__all', sceneId: null, group: false };
 
@@ -117,11 +118,12 @@ function renderHeader() {
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === ui.tab));
 }
 function render() {
-  if (ui.view === 'event' && !curEvent() && !(CFG && !cloud.ok)) ui.view = 'home';
+  if (ui.view === 'event' && !curEvent() && !(CFG && !cloud.ok) && !routeLoading()) ui.view = 'home';
   if (ui.view !== 'event' || ui.tab !== 'editor') ui.full = false;
   document.body.classList.toggle('noscroll', ui.full);
   renderHeader();
   const m = document.getElementById('main');
+  if (routeLoading()) { m.innerHTML = '<div class="card empty">連線中…</div>'; return; }
   if (CFG && !cloud.ok) { m.innerHTML = `<div class="card empty">${cloud.err ? '無法連線到雲端：' + esc(cloud.err) : '連線中…'}</div>`; return; }
   if (ui.view === 'home') { m.innerHTML = renderHome(); syncUrl(); return; }
   m.innerHTML = eventBar() + ({ editor: renderEditor, props: renderProps, output: renderOutput })[ui.tab]();
@@ -137,16 +139,18 @@ function applyRoute(r) {
   ui.sel = null;
 }
 let lastE = '';
+/* 網址指定的事件還沒從伺服器確認前（快取可能是空的），不要誤判成「事件不存在」而跳回首頁 */
+const routeLoading = () => CFG && ui.view === 'event' && !curEvent() && !cloud.server.events && !cloud.giveUp;
 function routeHash() {
   const ev = ui.view === 'event' && curEvent(); if (!ev) return '';
   const p = new URLSearchParams({ e: ev.id, t: ui.tab }), sc = curScene(); if (sc && ui.tab === 'editor') p.set('s', sc.id);
   return '#' + p;
 }
 function syncUrl() {
-  if (CFG && !cloud.ok) return;                              // 雲端還在載入：先保留網址上的事件
+  if (CFG && (!cloud.ok || routeLoading())) return;          // 雲端還在載入：先保留網址上的事件
   const h = routeHash(), ev = h ? curEvent().id : '';
   if (h !== location.hash) history[ev !== lastE ? 'pushState' : 'replaceState'](null, '', location.pathname + location.search + h);
-  lastE = ev;
+  lastE = ev; lsSet(LAST_KEY, h);
 }
 window.addEventListener('popstate', () => { applyRoute(parseHash()); render(); });
 
@@ -548,7 +552,7 @@ function flushStash(wrote) {
   if (any) refreshRemote();
 }
 function onData(name, docs, fromCache) {
-  cloud.fromCache = fromCache; cloud.got[name] = true; cloud.err = null;
+  cloud.fromCache = fromCache; cloud.got[name] = true; cloud.err = null; if (!fromCache) cloud.server[name] = true;
   applyRemote(name, docs);
   if (!cloud.ok) {
     if (!['stages', 'props', 'events', 'scenes'].every(k => cloud.got[k])) return;
@@ -586,7 +590,9 @@ function maybeMigrate() {                                    // 雲端是空的�
   }
 }
 async function boot() {
-  const r = parseHash(); applyRoute(r); lastE = r.e || '';
+  let r = parseHash();
+  if (!r.e) { const l = lsGet(LAST_KEY); if (l) { const p = new URLSearchParams(l.slice(1)); r = { ...r, e: p.get('e'), t: p.get('t'), s: p.get('s') }; } }   // 直接開網站：回到上次所在的事件
+  applyRoute(r); lastE = r.e || '';
   if (!CFG && migrateLegacy()) save();
   if (r.c) { const p = new URLSearchParams(location.hash.slice(1)); p.delete('c'); history.replaceState(null, '', location.pathname + location.search + (p.toString() ? '#' + p : '')); }
   render();
@@ -599,7 +605,7 @@ async function boot() {
   try {
     const [api, diff] = await Promise.all([import('./sync.js'), import('./diff.js')]);
     cloud.diff = diff; cloud.api = api.connect(CFG, code, { onData, onError });
-    setTimeout(() => { if (!cloud.ok && !cloud.err) { cloud.err = '連線逾時：請確認 Firebase 已建立 Firestore Database（位置選 asia-east1）、規則已發布，且網路沒有擋 firestore.googleapis.com'; render(); } }, 12000);
+    setTimeout(() => { cloud.giveUp = true; if (cloud.ok) { render(); return; } if (!cloud.err) { cloud.err = '連線逾時：請確認 Firebase 已建立 Firestore Database（位置選 asia-east1）、規則已發布，且網路沒有擋 firestore.googleapis.com'; render(); } }, 12000);
   } catch (e) { onError(e); }
 }
 boot();

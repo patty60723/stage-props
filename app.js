@@ -117,14 +117,36 @@ function renderHeader() {
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === ui.tab));
 }
 function render() {
-  if (ui.view === 'event' && !curEvent()) ui.view = 'home';
+  if (ui.view === 'event' && !curEvent() && !(CFG && !cloud.ok)) ui.view = 'home';
   renderHeader();
   const m = document.getElementById('main');
   if (CFG && !cloud.ok) { m.innerHTML = `<div class="card empty">${cloud.err ? '無法連線到雲端：' + esc(cloud.err) : '連線中…'}</div>`; return; }
-  if (ui.view === 'home') { m.innerHTML = renderHome(); return; }
+  if (ui.view === 'home') { m.innerHTML = renderHome(); syncUrl(); return; }
   m.innerHTML = eventBar() + ({ editor: renderEditor, props: renderProps, output: renderOutput })[ui.tab]();
   if (ui.tab === 'editor') { bindStage(); renderPropList(); }
+  syncUrl();
 }
+
+/* ---------- 網址：每個事件（含分頁、場景）都有自己的網址，可分享、可上一頁 ---------- */
+const TABS = ['editor', 'props', 'output'];
+const parseHash = () => { const p = new URLSearchParams(location.hash.slice(1)); return { c: p.get('c'), e: p.get('e'), t: p.get('t'), s: p.get('s') }; };
+function applyRoute(r) {
+  if (r.e) { S.currentEventId = r.e; ui.view = 'event'; ui.tab = TABS.includes(r.t) ? r.t : 'editor'; ui.sceneId = r.s || null; } else ui.view = 'home';
+  ui.sel = null;
+}
+let lastE = '';
+function routeHash() {
+  const ev = ui.view === 'event' && curEvent(); if (!ev) return '';
+  const p = new URLSearchParams({ e: ev.id, t: ui.tab }), sc = curScene(); if (sc && ui.tab === 'editor') p.set('s', sc.id);
+  return '#' + p;
+}
+function syncUrl() {
+  if (CFG && !cloud.ok) return;                              // 雲端還在載入：先保留網址上的事件
+  const h = routeHash(), ev = h ? curEvent().id : '';
+  if (h !== location.hash) history[ev !== lastE ? 'pushState' : 'replaceState'](null, '', location.pathname + location.search + h);
+  lastE = ev;
+}
+window.addEventListener('popstate', () => { applyRoute(parseHash()); render(); });
 
 /* ---------- 首頁：事件與舞台（上一層）---------- */
 function renderHome() {
@@ -403,7 +425,7 @@ document.addEventListener('click', e => {
     case 'print': return window.print();
     case 'png': return exportPNG();
     case 'csv': return exportCSV();
-    case 'share': { const url = location.origin + location.pathname + '#c=' + encodeURIComponent(cloud.code); (navigator.clipboard?.writeText(url) || Promise.reject()).then(() => alert('已複製連結，貼給同學即可直接加入：\n' + url), () => prompt('複製這個連結給同學：', url)); return; }
+    case 'share': { const url = location.origin + location.pathname + '#c=' + encodeURIComponent(cloud.code) + (routeHash() ? '&' + routeHash().slice(1) : ''); (navigator.clipboard?.writeText(url) || Promise.reject()).then(() => alert('已複製連結，貼給同學即可直接加入：\n' + url), () => prompt('複製這個連結給同學：', url)); return; }
     case 'switch-code': return askCode(true).then(c => { if (c && c !== cloud.code) { lsSet(CODE_KEY, c); location.reload(); } });
     case 'export-data': return download(`舞台道具備份_${new Date().toISOString().slice(0, 10)}.json`, new Blob([JSON.stringify(S, null, 1)], { type: 'application/json' }));
   }
@@ -509,11 +531,12 @@ function maybeMigrate() {                                    // 雲端是空的�
   }
 }
 async function boot() {
+  const r = parseHash(); applyRoute(r); lastE = r.e || '';
   if (!CFG && migrateLegacy()) save();
+  if (r.c) { const p = new URLSearchParams(location.hash.slice(1)); p.delete('c'); history.replaceState(null, '', location.pathname + location.search + (p.toString() ? '#' + p : '')); }
   render();
   if (!CFG) return;
-  let code = null; const m = location.hash.match(/[#&]c=([^&]+)/);
-  if (m) { code = decodeURIComponent(m[1]); history.replaceState(null, '', location.pathname + location.search); }
+  let code = r.c;
   if (!validCode(code)) code = lsGet(CODE_KEY);
   if (!validCode(code)) code = await askCode(false);
   lsSet(CODE_KEY, code); cloud.code = code; renderHeader();

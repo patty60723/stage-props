@@ -26,11 +26,25 @@ function seed() {
     events: [],
   };
 }
-let S;
-try { S = JSON.parse(localStorage.getItem(KEY)) || seed(); } catch { S = seed(); }
+const CFG = window.FIREBASE_CONFIG || null;           // 沒設定 Firebase → 單機模式
+const CUR_KEY = 'stage-props-cur', CODE_KEY = 'stage-props-code';
+const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { } };
+let legacy = null; try { legacy = JSON.parse(lsGet(KEY)); } catch { }
+let S = CFG ? { currentEventId: lsGet(CUR_KEY), stages: [], props: [], events: [] } : (legacy || seed());
+const cloud = { api: null, diff: null, code: null, ok: false, got: {}, stash: {}, fromCache: true, err: null, remote: { stages: [], props: [], events: [] } };
+const snap = s => JSON.parse(JSON.stringify({ stages: s.stages, props: s.props, events: s.events }));
 const ui = { tab: 'editor', sel: null, q: '', src: 'all', editProp: null, editStage: null, filter: '__all', group: false };
 
-function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch { } }
+/* 存檔：單機模式寫 localStorage；雲端模式把「和上次同步狀態的差異」送到 Firestore。回傳送出的寫入數 */
+function save() {
+  if (!CFG) { lsSet(KEY, JSON.stringify(S)); return 0; }
+  lsSet(CUR_KEY, S.currentEventId || '');
+  if (!cloud.api) return 0;
+  const ops = cloud.diff.computeOps(cloud.remote, S);
+  if (ops.length) { cloud.api.write(ops); cloud.remote = snap(S); }
+  return ops.length;
+}
 const stageOf = id => S.stages.find(s => s.id === id);
 const propOf = id => S.props.find(p => p.id === id);
 const curEvent = () => S.events.find(e => e.id === S.currentEventId) || null;
@@ -76,12 +90,15 @@ function renderHeader() {
   sel.innerHTML = S.events.length
     ? S.events.slice().sort((a, b) => (b.date || '').localeCompare(a.date || '')).map(e => `<option value="${e.id}"${e.id === S.currentEventId ? ' selected' : ''}>${esc(fmtEv(e))}</option>`).join('')
     : '<option>（尚無事件，請按「＋ 新事件」）</option>';
+  const cb = document.getElementById('cloudBox');
+  if (cb) cb.innerHTML = CFG && cloud.code ? `<span class="muted" title="${cloud.err ? esc(cloud.err) : ''}">☁ 班級 ${esc(cloud.code)}・${cloud.err ? '⚠ 無法存取雲端' : (!navigator.onLine || cloud.fromCache ? '連線中／離線' : '已同步')}</span> <button data-act="share">分享連結</button> <button data-act="switch-code">換代碼</button>` : '';
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === ui.tab));
 }
 function render() {
   if (!curEvent() && S.events.length) S.currentEventId = S.events[0].id;
   renderHeader();
   const m = document.getElementById('main');
+  if (CFG && !cloud.ok) { m.innerHTML = `<div class="card empty">${cloud.err ? '無法連線到雲端：' + esc(cloud.err) : '連線中…'}</div>`; return; }
   m.innerHTML = ({ editor: renderEditor, props: renderProps, stages: renderStages, output: renderOutput })[ui.tab]();
   if (ui.tab === 'editor') { bindStage(); renderPropList(); }
 }
@@ -150,7 +167,11 @@ document.addEventListener('pointermove', e => {
   let nx = Math.round(drag.pl.x * 20) / 20, ny = Math.round(drag.pl.y * 20) / 20; drag.pl.x = nx; drag.pl.y = ny; clampPl(drag.pl);
   drag.g.setAttribute('transform', `translate(${drag.pl.x} ${drag.pl.y}) rotate(${drag.pl.rot || 0})`);
 });
-document.addEventListener('pointerup', () => { if (!drag) return; const m = drag.moved; drag = null; if (m) { save(); renderStageBox(); } });
+document.addEventListener('pointerup', () => {
+  if (!drag) return; const m = drag.moved; drag = null; let n = 0;
+  if (m) { n = save(); renderStageBox(); }
+  flushStash(n);
+});
 document.addEventListener('keydown', e => {
   if (ui.tab !== 'editor' || !ui.sel || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName)) return;
   const ev = curEvent(), pl = ev?.placements.find(x => x.id === ui.sel); if (!pl) return;
@@ -282,9 +303,9 @@ document.addEventListener('click', e => {
     case 'ev-edit': return eventDialog('edit');
     case 'ev-dup': if (!ev) return; { const n = JSON.parse(JSON.stringify(ev)); n.id = uid(); n.name += '（複製）'; n.placements.forEach(p => p.id = uid()); S.events.push(n); S.currentEventId = n.id; save(); return render(); }
     case 'ev-del': if (ev && confirm(`刪除事件「${ev.name}」？（道具庫不受影響）`)) { S.events = S.events.filter(x => x !== ev); S.currentEventId = S.events[0]?.id || null; ui.sel = null; save(); render(); } return;
-    case 'add-pl': { const p = propOf(id), st = stageOf(ev.stageId); const n = ev.placements.length; const pl = { id: uid(), propId: id, x: r2(st.w / 2 + (n % 5 - 2) * 0.3), y: r2(st.d / 2 + (n % 5 - 2) * 0.3), rot: 0 }; ev.placements.push(pl); ui.sel = pl.id; save(); return renderStageBox(); }
+    case 'add-pl': { const p = propOf(id), st = stageOf(ev.stageId); const n = ev.placements.length; const pl = { id: uid(), t: Date.now(), propId: id, x: r2(st.w / 2 + (n % 5 - 2) * 0.3), y: r2(st.d / 2 + (n % 5 - 2) * 0.3), rot: 0 }; ev.placements.push(pl); ui.sel = pl.id; save(); return renderStageBox(); }
     case 'pl-rot': { const pl = ev.placements.find(x => x.id === ui.sel); if (pl) { pl.rot = ((pl.rot || 0) + 90) % 360; save(); renderStageBox(); } return; }
-    case 'pl-dup': { const pl = ev.placements.find(x => x.id === ui.sel); if (pl) { const n = { ...pl, id: uid(), x: pl.x + .3, y: pl.y + .3 }; clampPl(n); ev.placements.push(n); ui.sel = n.id; save(); renderStageBox(); } return; }
+    case 'pl-dup': { const pl = ev.placements.find(x => x.id === ui.sel); if (pl) { const n = { ...pl, id: uid(), t: Date.now(), x: pl.x + .3, y: pl.y + .3 }; clampPl(n); ev.placements.push(n); ui.sel = n.id; save(); renderStageBox(); } return; }
     case 'pl-del': ev.placements = ev.placements.filter(x => x.id !== ui.sel); ui.sel = null; save(); return renderStageBox();
     case 'edit-prop': ui.editProp = id; return render();
     case 'cancel-prop': ui.editProp = null; return render();
@@ -295,6 +316,8 @@ document.addEventListener('click', e => {
     case 'print': return window.print();
     case 'png': return exportPNG();
     case 'csv': return exportCSV();
+    case 'share': { const url = location.origin + location.pathname + '#c=' + encodeURIComponent(cloud.code); (navigator.clipboard?.writeText(url) || Promise.reject()).then(() => alert('已複製連結，貼給同學即可直接加入：\n' + url), () => prompt('複製這個連結給同學：', url)); return; }
+    case 'switch-code': return askCode(true).then(c => { if (c && c !== cloud.code) { lsSet(CODE_KEY, c); location.reload(); } });
     case 'export-data': return download(`舞台道具備份_${new Date().toISOString().slice(0, 10)}.json`, new Blob([JSON.stringify(S, null, 1)], { type: 'application/json' }));
   }
 });
@@ -330,10 +353,84 @@ document.addEventListener('change', e => {
   if (t.id === 'importFile' && t.files[0]) {
     const r = new FileReader();
     r.onload = () => {
-      try { const d = JSON.parse(r.result); if (!d.stages || !d.props || !d.events) throw 0; if (!confirm('還原會取代目前所有資料，確定嗎？')) return; S = d; save(); render(); }
+      try { const d = JSON.parse(r.result); if (!d.stages || !d.props || !d.events) throw 0; if (!confirm(CFG ? '還原會取代「全班共用」的所有資料，確定嗎？' : '還原會取代目前所有資料，確定嗎？')) return; S = d; save(); render(); }
       catch { alert('這不是有效的備份檔'); }
     };
     r.readAsText(t.files[0]); t.value = '';
   }
 });
-render();
+/* ---------- 雲端（Firebase）---------- */
+const validCode = c => /^[A-Za-z0-9_-]{6,40}$/.test(c || '');
+function askCode(cancelable) {
+  return new Promise(resolve => {
+    const dlg = document.getElementById('dlg');
+    dlg.innerHTML = `<form id="codeForm"><h3>班級共用代碼</h3>
+      <div class="muted">同班同學輸入同一組代碼，就會看到同一份資料。代碼等於密碼，請只告訴同學。</div><br>
+      <label class="f">代碼（6～40 個英文字母、數字、- 或 _）<input name="code" required minlength="6" maxlength="40" pattern="[A-Za-z0-9_\\-]{6,40}" autocomplete="off" autocapitalize="off" placeholder="例：sing2026-abc"></label>
+      <div class="row">${cancelable ? '<button type="button" id="codeCancel">取消</button>' : ''}<button class="primary">進入</button></div></form>`;
+    dlg.oncancel = e => { if (!cancelable) e.preventDefault(); else resolve(null); };
+    dlg.showModal();
+    document.getElementById('codeForm').onsubmit = e => { e.preventDefault(); const c = new FormData(e.target).get('code').trim(); if (!validCode(c)) return; dlg.close(); resolve(c); };
+    const cc = document.getElementById('codeCancel'); if (cc) cc.onclick = () => { dlg.close(); resolve(null); };
+  });
+}
+function applyRemote(name, docs) {
+  if (drag) { cloud.stash[name] = docs; return; }            // 拖曳中先不動畫面，放開後再套用
+  S[name] = name === 'events' ? docs.map(({ id, ...r }) => cloud.diff.evFromDoc(id, r)) : docs;
+  cloud.remote[name] = JSON.parse(JSON.stringify(S[name]));
+}
+function flushStash(wrote) {
+  const st = cloud.stash; cloud.stash = {}; let any = false;
+  for (const [name, docs] of Object.entries(st)) { if (name === 'events' && wrote) continue; applyRemote(name, docs); any = true; }
+  if (any) refreshRemote();
+}
+function onData(name, docs, fromCache) {
+  cloud.fromCache = fromCache; cloud.got[name] = true; cloud.err = null;
+  applyRemote(name, docs);
+  if (!cloud.ok) {
+    if (!['stages', 'props', 'events'].every(k => cloud.got[k])) return;
+    cloud.ok = true; maybeMigrate(); render(); return;
+  }
+  refreshRemote();
+}
+let warned = false;
+function onError(err) {
+  console.error(err); cloud.err = err.code || err.message;
+  if (err.code === 'permission-denied' && !warned) { warned = true; alert('雲端拒絕存取：請確認 Firestore 的安全規則已依 SETUP.md 設定。'); }
+  if (!cloud.ok) render(); else renderHeader();
+}
+/* 遠端有更新時只重畫必要的部分，避免打斷正在輸入的欄位 */
+function refreshRemote() {
+  renderHeader();
+  const act = document.activeElement, inForm = !!act?.closest?.('main form, #selPanel');
+  if (!curEvent() && S.events.length) S.currentEventId = S.events[0].id;
+  if (ui.tab === 'editor') {
+    const box = document.getElementById('stageBox');
+    if (!curEvent() || !box) { if (!inForm) render(); return; }
+    box.innerHTML = stageSVG(curEvent(), { interactive: true }); renderPropList();
+    if (!act?.closest?.('#selPanel')) renderSelPanel();
+  } else if (!inForm) render();
+}
+function maybeMigrate() {                                    // 雲端是空的、這台瀏覽器有舊資料 → 問要不要上傳
+  if (S.stages.length || S.props.length || S.events.length) return;
+  const flag = 'stage-props-asked-' + cloud.code; if (lsGet(flag)) return; lsSet(flag, '1');
+  if (!legacy || !(legacy.events?.length || legacy.props?.length > 4 || legacy.stages?.length > 1)) return;
+  if (confirm('雲端還沒有任何資料。要把這台瀏覽器裡原本的資料上傳到班級共用嗎？')) {
+    S.stages = legacy.stages || []; S.props = legacy.props || []; S.events = legacy.events || []; S.currentEventId = legacy.currentEventId || null; save();
+  }
+}
+async function boot() {
+  render();
+  if (!CFG) return;
+  let code = null; const m = location.hash.match(/[#&]c=([^&]+)/);
+  if (m) { code = decodeURIComponent(m[1]); history.replaceState(null, '', location.pathname + location.search); }
+  if (!validCode(code)) code = lsGet(CODE_KEY);
+  if (!validCode(code)) code = await askCode(false);
+  lsSet(CODE_KEY, code); cloud.code = code; renderHeader();
+  window.addEventListener('online', renderHeader); window.addEventListener('offline', renderHeader);
+  try {
+    const [api, diff] = await Promise.all([import('./sync.js'), import('./diff.js')]);
+    cloud.diff = diff; cloud.api = api.connect(CFG, code, { onData, onError });
+  } catch (e) { onError(e); }
+}
+boot();

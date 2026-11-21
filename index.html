@@ -16,7 +16,7 @@
     <button data-act="ev-dup">複製</button>
     <button data-act="ev-del" class="danger">刪除</button>
   </div>
-  <div class="datamenu">
+  <div class="datamenu"><span id="cloudBox"></span>
     <button data-act="export-data" title="下載全部資料（備份）">備份</button>
     <label class="btn" title="從備份檔還原">還原<input type="file" id="importFile" accept=".json,application/json" hidden></label>
   </div>
@@ -29,6 +29,7 @@
 </nav>
 <main id="main"></main>
 <dialog id="dlg"></dialog>
+<script src="firebase-config.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

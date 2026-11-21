@@ -36,7 +36,7 @@ S.scenes = S.scenes || [];
 const LAST_KEY = 'stage-props-last';
 const cloud = { server: {}, giveUp: false, api: null, diff: null, code: null, ok: false, got: {}, stash: {}, fromCache: true, err: null, remote: { stages: [], props: [], events: [], scenes: [] } };
 const snap = s => JSON.parse(JSON.stringify({ stages: s.stages, props: s.props, events: s.events, scenes: s.scenes }));
-const ui = { tab: 'editor', sel: null, q: '', src: 'all', editProp: null, editStage: null, zoom: 1, nudge: 0.05, full: false, view: 'home', outScene: '__all', sceneId: null, group: false };
+const ui = { tab: 'editor', sel: null, q: '', src: 'all', editProp: null, editStage: null, listOpen: false, zoom: 1, nudge: 0.05, full: false, view: 'home', outScene: '__all', sceneId: null, group: false };
 
 /* 存檔：單機模式寫 localStorage；雲端模式把「和上次同步狀態的差異」送到 Firestore。回傳送出的寫入數 */
 function save() {
@@ -194,6 +194,7 @@ function renderEditor() {
       <div class="muted" style="margin-top:6px">點「＋」放到舞台；同一道具可放多次，也可在多個場景、事件重複使用。找不到？到「道具庫」新增。</div>
     </div>
     <div class="card" id="selPanel"></div>
+    <details class="card" id="placList"${ui.listOpen ? ' open' : ''}><summary id="placSum"></summary><div id="placBody"></div></details>
   </div>
   <div class="card stagewrap${ui.full ? ' full' : ''}">
     <div class="zoombar no-print"><button class="small" data-act="z-out" title="縮小">－</button><span id="zlabel">${Math.round(ui.zoom * 100)}%</span><button class="small" data-act="z-in" title="放大">＋</button><button class="small" data-act="z-fit">適合畫面</button><button class="small" data-act="z-full">${ui.full ? '✕ 離開全螢幕' : '⛶ 全螢幕'}</button></div>
@@ -214,7 +215,27 @@ function renderStageBox() {
   box.innerHTML = stageSVG(ev, curScene(), { interactive: true });
   renderSelPanel();
 }
+/* ---- 場景中的道具清單：可選取、刪除；超出舞台的可移回 ---- */
+const isOut = (pl, st) => st && (pl.x < 0 || pl.x > st.w || pl.y < 0 || pl.y > st.d);
+function fitScenesToStage(eventId) {                         // 舞台尺寸或事件舞台改變後，把超出範圍的道具拉回邊界
+  const ev = S.events.find(e => e.id === eventId), st = ev && stageOf(ev.stageId); let moved = 0; if (!st) return 0;
+  for (const sc of S.scenes) if (sc.eventId === eventId) for (const pl of sc.placements) if (isOut(pl, st)) { pl.x = r2(Math.min(st.w, Math.max(0, pl.x))); pl.y = r2(Math.min(st.d, Math.max(0, pl.y))); moved++; }
+  return moved;
+}
+function renderPlacList() {
+  const sc = curScene(), body = document.getElementById('placBody'), sum = document.getElementById('placSum'); if (!body || !sum || !sc) return;
+  const st = stageOf(curEvent().stageId), nOut = sc.placements.filter(p => isOut(p, st)).length, total = {}, k = {};
+  sc.placements.forEach(p => total[p.propId] = (total[p.propId] || 0) + 1);
+  sum.innerHTML = `場景中的道具（${sc.placements.length}）${nOut ? ` <span class="warn">⚠ ${nOut} 件超出舞台</span>` : ''}`;
+  body.innerHTML = (nOut ? '<div class="toolbar"><button class="small primary" data-act="pl-allin">全部移回舞台</button></div>' : '') +
+    (sc.placements.map(pl => {
+      const p = propOf(pl.propId), n = (k[pl.propId] = (k[pl.propId] || 0) + 1), out = isOut(pl, st);
+      return `<div class="prow plrow${ui.sel === pl.id ? ' sel' : ''}" data-plid="${pl.id}"><span class="dot ${p ? p.source : ''}"></span><div class="nm"><b>${esc(p ? p.name : '（已刪除的道具）')}${total[pl.propId] > 1 ? ' #' + n : ''}</b><span class="muted">X ${r2(pl.x)}・Y ${r2(pl.y)}${out ? ' <span class="warn">⚠ 超出舞台</span>' : ''}</span></div>${out ? `<button class="small" data-act="pl-in" data-plid="${pl.id}">移回</button>` : ''}<button class="small danger" data-act="pl-rm" data-plid="${pl.id}">刪除</button></div>`;
+    }).join('') || '<div class="muted">（還沒有道具）</div>') + '<div class="muted" style="margin-top:6px">點一列可選取，再用上方的欄位或方向按鈕調整位置。</div>';
+}
+document.addEventListener('toggle', e => { if (e.target.id === 'placList') ui.listOpen = e.target.open; }, true);
 function renderSelPanel() {
+  renderPlacList();
   const sc = curScene(), el = document.getElementById('selPanel'); if (!el || !sc) return;
   const pl = sc.placements.find(x => x.id === ui.sel), p = pl && propOf(pl.propId);
   const counts = {}; sc.placements.forEach(x => counts[x.propId] = (counts[x.propId] || 0) + 1);
@@ -422,7 +443,7 @@ function eventDialog(mode) {
   dlg.showModal();
   document.getElementById('evForm').onsubmit = ev => {
     const f = new FormData(ev.target);
-    if (mode === 'edit') { Object.assign(cur, { name: f.get('name'), date: f.get('date'), stageId: f.get('stage') }); }
+    if (mode === 'edit') { Object.assign(cur, { name: f.get('name'), date: f.get('date'), stageId: f.get('stage') }); const mv = fitScenesToStage(cur.id); if (mv) setTimeout(() => alert(`換了舞台後，有 ${mv} 件道具超出範圍，已移回舞台邊緣。`), 0); }
     else { const n = { id: uid(), name: f.get('name'), date: f.get('date'), stageId: f.get('stage'), migrated: true }; S.events.push(n); S.currentEventId = n.id; ui.sel = null; ui.sceneId = null; ui.view = 'event'; ui.tab = 'editor'; }
     save(); render();
   };
@@ -449,6 +470,8 @@ function sceneDialog(mode) {
 
 /* ---------- 事件委派 ---------- */
 document.addEventListener('click', e => {
+  const row = e.target.closest('.plrow');
+  if (row && !e.target.closest('button')) { ui.sel = row.dataset.plid; renderStageBox(); document.getElementById('stageBox')?.scrollIntoView({ block: 'nearest' }); return; }
   const t = e.target.closest('[data-act],[data-tab],[data-src],[data-scene]'); if (!t) return;
   if (t.dataset.tab) { ui.tab = t.dataset.tab; return render(); }
   if (t.dataset.scene) { ui.sceneId = t.dataset.scene; ui.sel = null; return render(); }
@@ -481,6 +504,9 @@ document.addEventListener('click', e => {
     case 'sc-del': if (sc && confirm(`刪除場景「${sceneLabel(sc)}」？\n裡面 ${sc.placements.length} 件道具的排法會一併刪除，且無法復原。`)) { S.scenes = S.scenes.filter(x => x !== sc); ui.sceneId = null; ui.sel = null; save(); render(); } return;
     case 'nudge': { const pl = sc?.placements.find(x => x.id === ui.sel); if (!pl) return; pl.x += +t.dataset.dx * ui.nudge; pl.y += +t.dataset.dy * ui.nudge; clampPl(pl); save(); return renderStageBox(); }
     case 'z-sel': return focusSel();
+    case 'pl-in': { const pl = sc?.placements.find(x => x.id === t.dataset.plid); if (!pl) return; ui.sel = pl.id; clampPl(pl); save(); return renderStageBox(); }
+    case 'pl-allin': { if (!sc) return; sc.placements.forEach(clampPl); save(); return renderStageBox(); }
+    case 'pl-rm': { const pl = sc?.placements.find(x => x.id === t.dataset.plid); if (!pl || !confirm(`從舞台移除「${propOf(pl.propId)?.name || '這個道具'}」？`)) return; sc.placements = sc.placements.filter(x => x !== pl); if (ui.sel === pl.id) ui.sel = null; save(); return renderStageBox(); }
     case 'z-in': return setZoom(ui.zoom * 1.25);
     case 'z-out': return setZoom(ui.zoom / 1.25);
     case 'z-fit': { setZoom(1); const b = document.getElementById('stageBox'); if (b) { b.scrollLeft = 0; b.scrollTop = 0; } return; }
@@ -506,7 +532,11 @@ document.addEventListener('submit', e => {
     ui.editProp = null;
   } else {
     const o = { name: f.get('name').trim(), w: num(f.get('w'), 8), d: num(f.get('d'), 6), notes: f.get('notes').trim() };
-    if (ui.editStage) Object.assign(stageOf(ui.editStage), o); else S.stages.push({ id: uid(), ...o });
+    if (ui.editStage) {
+      const sid = ui.editStage; Object.assign(stageOf(sid), o);
+      const mv = S.events.filter(e => e.stageId === sid).reduce((n, e) => n + fitScenesToStage(e.id), 0);
+      if (mv) setTimeout(() => alert(`舞台尺寸改小了，有 ${mv} 件道具超出範圍，已自動移回舞台邊緣。`), 0);
+    } else S.stages.push({ id: uid(), ...o });
     ui.editStage = null;
   }
   save(); render();

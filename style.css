@@ -77,3 +77,6 @@ dialog .row{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
 .stagewrap.full .selTools{display:flex}
 body.noscroll{overflow:hidden}
 .nudge{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px}
+details.card>summary{cursor:pointer;font-weight:600;list-style:revert}
+.plrow{cursor:pointer}.plrow.sel{background:#f3e8ff}
+.warn{color:var(--danger)}

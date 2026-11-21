@@ -35,7 +35,7 @@ let S = CFG ? { currentEventId: lsGet(CUR_KEY), stages: [], props: [], events: [
 S.scenes = S.scenes || [];
 const cloud = { api: null, diff: null, code: null, ok: false, got: {}, stash: {}, fromCache: true, err: null, remote: { stages: [], props: [], events: [], scenes: [] } };
 const snap = s => JSON.parse(JSON.stringify({ stages: s.stages, props: s.props, events: s.events, scenes: s.scenes }));
-const ui = { tab: 'editor', sel: null, q: '', src: 'all', editProp: null, editStage: null, view: 'home', outScene: '__all', sceneId: null, group: false };
+const ui = { tab: 'editor', sel: null, q: '', src: 'all', editProp: null, editStage: null, zoom: 1, full: false, view: 'home', outScene: '__all', sceneId: null, group: false };
 
 /* 存檔：單機模式寫 localStorage；雲端模式把「和上次同步狀態的差異」送到 Firestore。回傳送出的寫入數 */
 function save() {
@@ -118,6 +118,8 @@ function renderHeader() {
 }
 function render() {
   if (ui.view === 'event' && !curEvent() && !(CFG && !cloud.ok)) ui.view = 'home';
+  if (ui.view !== 'event' || ui.tab !== 'editor') ui.full = false;
+  document.body.classList.toggle('noscroll', ui.full);
   renderHeader();
   const m = document.getElementById('main');
   if (CFG && !cloud.ok) { m.innerHTML = `<div class="card empty">${cloud.err ? '無法連線到雲端：' + esc(cloud.err) : '連線中…'}</div>`; return; }
@@ -184,8 +186,11 @@ function renderEditor() {
     </div>
     <div class="card" id="selPanel"></div>
   </div>
-  <div class="card stagewrap"><div id="stageBox"></div>
-    <div class="legend">${Object.entries(SRC).map(([k, v]) => `<span><span class="dot ${k}"></span>${v.label}</span>`).join('')}<span class="muted">拖曳移動；選取後拖曳紫色圓點旋轉；方向鍵微調、R 旋轉、Delete 刪除</span></div>
+  <div class="card stagewrap${ui.full ? ' full' : ''}">
+    <div class="zoombar no-print"><button class="small" data-act="z-out" title="縮小">－</button><span id="zlabel">${Math.round(ui.zoom * 100)}%</span><button class="small" data-act="z-in" title="放大">＋</button><button class="small" data-act="z-fit">適合畫面</button><button class="small" data-act="z-full">${ui.full ? '✕ 離開全螢幕' : '⛶ 全螢幕'}</button></div>
+    <div id="stageBox" style="--z:${ui.zoom}"></div>
+    <div class="selTools no-print"><button class="small" data-act="pl-rot" data-d="-15">↺ 15°</button><button class="small" data-act="pl-rot" data-d="15">↻ 15°</button><button class="small" data-act="pl-rot" data-d="90">↻ 90°</button><button class="small" data-act="pl-dup">複製</button><button class="small danger" data-act="pl-del">移除</button></div>
+    <div class="legend">${Object.entries(SRC).map(([k, v]) => `<span><span class="dot ${k}"></span>${v.label}</span>`).join('')}<span class="muted">拖曳移動；拖紫色圓點旋轉；雙指或 Ctrl+滾輪縮放，拖空白處平移；方向鍵微調、R 旋轉、Delete 刪除</span></div>
   </div></div>`;
 }
 function renderPropList() {
@@ -217,6 +222,39 @@ function renderSelPanel() {
 function bindStage() { renderStageBox(); }
 
 let drag = null;
+/* ---- 縮放 / 平移 ---- */
+function setZoom(z, cx, cy) {
+  const box = document.getElementById('stageBox'); if (!box) return;
+  z = Math.min(5, Math.max(1, z)); const r = box.getBoundingClientRect();
+  if (cx == null) { cx = r.left + r.width / 2; cy = r.top + r.height / 2; }
+  const fx = (box.scrollLeft + cx - r.left) / box.scrollWidth, fy = (box.scrollTop + cy - r.top) / box.scrollHeight;
+  ui.zoom = z; box.style.setProperty('--z', z);
+  box.scrollLeft = fx * box.scrollWidth - (cx - r.left); box.scrollTop = fy * box.scrollHeight - (cy - r.top);
+  const l = document.getElementById('zlabel'); if (l) l.textContent = Math.round(z * 100) + '%';
+}
+const pts = new Map(); let pan = null, pinch = null;
+const dist = () => { const [a, b] = [...pts.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
+const mid = () => { const [a, b] = [...pts.values()]; return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; };
+function startPan(box) { const [p] = [...pts.values()]; pan = { x: p.x, y: p.y, sl: box.scrollLeft, st: box.scrollTop }; }
+document.addEventListener('pointerdown', e => {
+  const box = e.target.closest?.('#stageBox'); if (!box || e.target.closest('.g')) return;
+  pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); box.setPointerCapture?.(e.pointerId);
+  if (pts.size === 1) { startPan(box); pinch = null; } else if (pts.size === 2) { pan = null; pinch = { d: dist(), z: ui.zoom }; }
+});
+document.addEventListener('pointermove', e => {
+  if (!pts.has(e.pointerId)) return;
+  pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  const box = document.getElementById('stageBox'); if (!box) return;
+  if (pinch && pts.size >= 2) { const m = mid(); setZoom(pinch.z * dist() / pinch.d, m.x, m.y); }
+  else if (pan) { box.scrollLeft = pan.sl - (e.clientX - pan.x); box.scrollTop = pan.st - (e.clientY - pan.y); }
+});
+const endPt = e => { if (!pts.delete(e.pointerId)) return; pinch = null; pan = null; const box = document.getElementById('stageBox'); if (pts.size === 1 && box) startPan(box); };
+document.addEventListener('pointerup', endPt); document.addEventListener('pointercancel', endPt);
+document.addEventListener('wheel', e => {
+  if (!(e.ctrlKey || e.metaKey) || !e.target.closest?.('#stageBox')) return;
+  e.preventDefault(); setZoom(ui.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15), e.clientX, e.clientY);
+}, { passive: false });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && ui.full) { ui.full = false; render(); } });
 function svgPoint(svg, e) { const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY; return pt.matrixTransform(svg.getScreenCTM().inverse()); }
 function clampPl(pl) { const st = stageOf(curEvent().stageId); pl.x = Math.min(st.w, Math.max(0, r2(pl.x))); pl.y = Math.min(st.d, Math.max(0, r2(pl.y))); }
 document.addEventListener('pointerdown', e => {
@@ -399,7 +437,7 @@ document.addEventListener('click', e => {
   const ev = curEvent(), sc = curScene(), id = t.dataset.id;
   switch (t.dataset.act) {
     case 'home': e.preventDefault(); ui.view = 'home'; ui.sel = null; return render();
-    case 'ev-open': S.currentEventId = id; ui.view = 'event'; ui.tab = 'editor'; ui.sceneId = null; ui.sel = null; save(); return render();
+    case 'ev-open': ui.zoom = 1; ui.full = false; S.currentEventId = id; ui.view = 'event'; ui.tab = 'editor'; ui.sceneId = null; ui.sel = null; save(); return render();
     case 'ev-new': if (!S.stages.length) { alert('請先在下方新增舞台規格'); return; } return eventDialog('new');
     case 'ev-edit': return eventDialog('edit');
     case 'ev-dup': if (!ev) return; { const n = JSON.parse(JSON.stringify(ev)); n.id = uid(); n.name += '（複製）'; n.migrated = true; S.events.push(n);
@@ -422,6 +460,10 @@ document.addEventListener('click', e => {
     case 'sc-edit': return sceneDialog('edit');
     case 'sc-dup': if (!sc) return; { const c = JSON.parse(JSON.stringify(sc)); c.id = uid(); c.t = Date.now(); c.owner += '（複製）'; c.placements.forEach(p => p.id = uid()); S.scenes.push(c); ui.sceneId = c.id; ui.sel = null; save(); return render(); }
     case 'sc-del': if (sc && confirm(`刪除場景「${sceneLabel(sc)}」？`)) { S.scenes = S.scenes.filter(x => x !== sc); ui.sceneId = null; ui.sel = null; save(); render(); } return;
+    case 'z-in': return setZoom(ui.zoom * 1.25);
+    case 'z-out': return setZoom(ui.zoom / 1.25);
+    case 'z-fit': { setZoom(1); const b = document.getElementById('stageBox'); if (b) { b.scrollLeft = 0; b.scrollTop = 0; } return; }
+    case 'z-full': ui.full = !ui.full; return render();
     case 'print': return window.print();
     case 'png': return exportPNG();
     case 'csv': return exportCSV();

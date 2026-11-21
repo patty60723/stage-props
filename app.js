@@ -50,6 +50,10 @@ function save() {
 const stageOf = id => S.stages.find(s => s.id === id);
 const propOf = id => S.props.find(p => p.id === id);
 const curEvent = () => S.events.find(e => e.id === S.currentEventId) || null;
+/* 演員不需要寬深：一律用固定大小的圓形標示 */
+const ACTOR = 0.5;
+const propSize = p => p.source === 'actor' ? { w: ACTOR, d: ACTOR } : { w: p.w, d: p.d };
+const sizeText = p => p.source === 'actor' ? '—' : `${p.w}×${p.d}`;
 const ownerKey = p => p.source === 'theatre' ? '劇場' : (p.owner || '（未指定）');
 const ME_KEY = 'stage-props-me';
 const scenesOf = eid => S.scenes.filter(s => s.eventId === eid).sort((a, b) => (a.t || 0) - (b.t || 0) || (a.id < b.id ? -1 : 1));
@@ -92,13 +96,14 @@ function stageSVG(ev, sc, opt = {}) {
     const p = propOf(pl.propId); if (!p) continue;
     const c = SRC[p.source].color;
     const sel = opt.interactive && ui.sel === pl.id;
+    const sz = propSize(p);
     const shape = p.source === 'actor'
-      ? `<ellipse rx="${p.w / 2}" ry="${p.d / 2}" fill="${c}" fill-opacity=".3" stroke="${c}" stroke-width="${fs * (sel ? .3 : .15)}"${sel ? ` stroke-dasharray="${fs * .4} ${fs * .3}"` : ''}/>`
-      : `<rect x="${-p.w / 2}" y="${-p.d / 2}" width="${p.w}" height="${p.d}" rx="${fs * .15}" fill="${c}" fill-opacity=".25" stroke="${c}" stroke-width="${fs * (sel ? .3 : .15)}"${sel ? ` stroke-dasharray="${fs * .4} ${fs * .3}"` : ''}/>`;
+      ? `<ellipse rx="${sz.w / 2}" ry="${sz.d / 2}" fill="${c}" fill-opacity=".3" stroke="${c}" stroke-width="${fs * (sel ? .3 : .15)}"${sel ? ` stroke-dasharray="${fs * .4} ${fs * .3}"` : ''}/>`
+      : `<rect x="${-sz.w / 2}" y="${-sz.d / 2}" width="${sz.w}" height="${sz.d}" rx="${fs * .15}" fill="${c}" fill-opacity=".25" stroke="${c}" stroke-width="${fs * (sel ? .3 : .15)}"${sel ? ` stroke-dasharray="${fs * .4} ${fs * .3}"` : ''}/>`;
     let handle = '';
-    if (sel) { const rr = (w + 2 * m) * 0.03, ty = -p.d / 2 - rr * 2.2;   // 旋轉把手：拖曳即可轉
-      handle = `<line x1="0" y1="${-p.d / 2}" x2="0" y2="${ty}" stroke="#7c3aed" stroke-width="${fs * .12}"/><circle class="rot" cx="0" cy="${ty}" r="${rr * 1.8}" fill="transparent"/><circle cx="0" cy="${ty}" r="${rr}" fill="#7c3aed" stroke="#fff" stroke-width="${fs * .1}" pointer-events="none"/>`; }
-    const maxc = Math.max(2, Math.floor(Math.max(p.w, p.d) / fs)) ;
+    if (sel) { const rr = (w + 2 * m) * 0.03, ty = -sz.d / 2 - rr * 2.2;   // 旋轉把手：拖曳即可轉
+      handle = `<line x1="0" y1="${-sz.d / 2}" x2="0" y2="${ty}" stroke="#7c3aed" stroke-width="${fs * .12}"/><circle class="rot" cx="0" cy="${ty}" r="${rr * 1.8}" fill="transparent"/><circle cx="0" cy="${ty}" r="${rr}" fill="#7c3aed" stroke="#fff" stroke-width="${fs * .1}" pointer-events="none"/>`; }
+    const maxc = Math.max(2, Math.floor(Math.max(sz.w, sz.d) / fs)) ;
     const nm = p.name.length > maxc ? p.name.slice(0, maxc - 1) + '…' : p.name;
     const ow = p.source !== 'theatre' && p.owner && p.owner !== p.name ? p.owner : '';
     const ot = ow ? (ow.length > maxc ? ow.slice(0, maxc - 1) + '…' : ow) : '';
@@ -202,7 +207,7 @@ function renderPropList() {
   chips.innerHTML = [['all', '全部'], ...Object.entries(SRC).map(([k, v]) => [k, v.label])].map(([k, l]) => `<button data-src="${k}" class="${ui.src === k ? 'on' : ''}">${l}</button>`).join('');
   const q = ui.q.trim().toLowerCase();
   const list = S.props.filter(p => (ui.src === 'all' || p.source === ui.src) && (!q || (p.name + p.owner).toLowerCase().includes(q)));
-  document.getElementById('plist').innerHTML = list.length ? list.map(p => `<div class="prow"><span class="dot ${p.source}"></span><div class="nm"><b>${esc(p.name)}</b><span class="muted">${esc(ownerKey(p))}・${p.w}×${p.d}m</span></div><button class="small" data-act="add-pl" data-id="${p.id}">＋</button></div>`).join('') : '<div class="muted">沒有符合的道具</div>';
+  document.getElementById('plist').innerHTML = list.length ? list.map(p => `<div class="prow"><span class="dot ${p.source}"></span><div class="nm"><b>${esc(p.name)}</b><span class="muted">${esc(ownerKey(p))}${p.source === 'actor' ? '' : '・' + p.w + '×' + p.d + 'm'}</span></div><button class="small" data-act="add-pl" data-id="${p.id}">＋</button></div>`).join('') : '<div class="muted">沒有符合的道具</div>';
 }
 function renderStageBox() {
   const ev = curEvent(), box = document.getElementById('stageBox'); if (!ev || !box) return;
@@ -231,7 +236,7 @@ const snapStep = () => ui.zoom >= 4 ? 0.01 : ui.zoom >= 2 ? 0.02 : 0.05;
 const nudgeHTML = () => `<div class="nudge no-print"><button class="small" data-act="nudge" data-dx="-1" data-dy="0">←</button><button class="small" data-act="nudge" data-dx="0" data-dy="-1">↑</button><button class="small" data-act="nudge" data-dx="0" data-dy="1">↓</button><button class="small" data-act="nudge" data-dx="1" data-dy="0">→</button><select data-nudge title="每次移動多少">${[[0.01, '1 公分'], [0.05, '5 公分'], [0.25, '25 公分']].map(([v, l]) => `<option value="${v}"${ui.nudge === v ? ' selected' : ''}>${l}</option>`).join('')}</select><button class="small" data-act="z-sel">🔍 放大到選取</button></div>`;
 function focusSel() {                                         // 放大到選取的物件並置中
   const sc = curScene(), pl = sc?.placements.find(x => x.id === ui.sel), box = document.getElementById('stageBox'), st = stageOf(curEvent().stageId); if (!pl || !box) return;
-  const p = propOf(pl.propId), W = st.w + 1.2, fs = Math.max(st.w, st.d) * 0.025;
+  const p = propSize(propOf(pl.propId)), W = st.w + 1.2, fs = Math.max(st.w, st.d) * 0.025;
   setZoom(Math.min(10, Math.max(1, W / Math.max(2, Math.max(p.w, p.d) * 6))));
   const ppu = box.querySelector('svg').getBoundingClientRect().width / W;
   box.scrollLeft = (pl.x + 0.6) * ppu - box.clientWidth / 2; box.scrollTop = (pl.y + fs * 3.4) * ppu - box.clientHeight / 2;
@@ -318,15 +323,15 @@ function renderProps() {
   const usage = id => S.scenes.filter(sc => sc.placements.some(x => x.propId === id)).length;
   const groups = Object.keys(SRC).map(k => {
     const l = S.props.filter(p => p.source === k);
-    return `<h3><span class="dot ${k}"></span>${SRC[k].label}（${l.length}）</h3>` + (l.length ? `<table><tr><th>名稱</th><th>提供者</th><th>尺寸 寬×深(m)</th><th>已用於</th><th></th></tr>${l.map(p => `<tr><td>${esc(p.name)}${p.notes ? `<div class="muted">${esc(p.notes)}</div>` : ''}</td><td>${esc(p.source === 'theatre' ? '劇場' : p.owner)}</td><td>${p.w}×${p.d}</td><td>${usage(p.id)} 個場景</td><td style="white-space:nowrap"><button class="small" data-act="edit-prop" data-id="${p.id}">編輯</button> <button class="small danger" data-act="del-prop" data-id="${p.id}">刪除</button></td></tr>`).join('')}</table>` : '<div class="muted">（無）</div>');
+    return `<h3><span class="dot ${k}"></span>${SRC[k].label}（${l.length}）</h3>` + (l.length ? `<table><tr><th>名稱</th><th>提供者</th><th>尺寸 寬×深(m)</th><th>已用於</th><th></th></tr>${l.map(p => `<tr><td>${esc(p.name)}${p.notes ? `<div class="muted">${esc(p.notes)}</div>` : ''}</td><td>${esc(p.source === 'theatre' ? '劇場' : p.owner)}</td><td>${sizeText(p)}</td><td>${usage(p.id)} 個場景</td><td style="white-space:nowrap"><button class="small" data-act="edit-prop" data-id="${p.id}">編輯</button> <button class="small danger" data-act="del-prop" data-id="${p.id}">刪除</button></td></tr>`).join('')}</table>` : '<div class="muted">（無）</div>');
   }).join('');
   return `<div class="card"><h2>${ui.editProp ? '編輯道具' : '新增道具'}</h2>
   <form data-form="prop"><div class="grid2">
     <label class="f">名稱<input name="name" required value="${esc(ep.name)}" placeholder="例：椅子、吉他、阿花"></label>
     <label class="f">類別<select name="source">${Object.entries(SRC).map(([k, v]) => `<option value="${k}"${ep.source === k ? ' selected' : ''}>${v.label}</option>`).join('')}</select></label>
     <label class="f">提供者／演員姓名（劇場提供可留空）<input name="owner" list="owners" value="${esc(ep.owner)}"></label>
-    <label class="f">寬（公尺，左右）<input name="w" type="number" step="0.05" min="0.05" value="${ep.w}"></label>
-    <label class="f">深（公尺，前後）<input name="d" type="number" step="0.05" min="0.05" value="${ep.d}"></label>
+    <label class="f sizef"${ep.source === 'actor' ? ' hidden' : ''}>寬（公尺，左右）<input name="w" type="number" step="0.05" min="0.05" value="${ep.w}"></label>
+    <label class="f sizef"${ep.source === 'actor' ? ' hidden' : ''}>深（公尺，前後）<input name="d" type="number" step="0.05" min="0.05" value="${ep.d}"></label>
     <label class="f">備註<input name="notes" value="${esc(ep.notes)}"></label>
   </div><datalist id="owners">${owners.map(o => `<option value="${esc(o)}">`).join('')}</datalist>
   <div class="row-btn" style="margin-top:10px"><button class="primary">${ui.editProp ? '儲存' : '新增'}</button> ${ui.editProp ? '<button type="button" data-act="cancel-prop">取消</button>' : ''}</div></form></div>
@@ -356,7 +361,7 @@ function rowsFor(scs) {
   }
   return [...map.values()].sort((a, b) => ORDER[a.p.source] - ORDER[b.p.source] || ownerKey(a.p).localeCompare(ownerKey(b.p), 'zh-Hant') || a.p.name.localeCompare(b.p.name, 'zh-Hant'));
 }
-const tableHTML = (rows, users) => rows.length ? `<table><tr><th>道具</th><th>類別</th><th>提供者</th><th>尺寸 (m)</th><th>數量</th>${users ? '<th>使用場景</th>' : ''}</tr>${rows.map(({ p, n, users: u }) => `<tr><td>${esc(p.name)}</td><td>${SRC[p.source].label}</td><td>${esc(ownerKey(p))}</td><td>${p.w}×${p.d}</td><td>${n}</td>${users ? `<td>${esc([...u].join('、'))}</td>` : ''}</tr>`).join('')}</table>` : '<div class="muted">（沒有道具）</div>';
+const tableHTML = (rows, users) => rows.length ? `<table><tr><th>道具</th><th>類別</th><th>提供者</th><th>尺寸 (m)</th><th>數量</th>${users ? '<th>使用場景</th>' : ''}</tr>${rows.map(({ p, n, users: u }) => `<tr><td>${esc(p.name)}</td><td>${SRC[p.source].label}</td><td>${esc(ownerKey(p))}</td><td>${sizeText(p)}</td><td>${n}</td>${users ? `<td>${esc([...u].join('、'))}</td>` : ''}</tr>`).join('')}</table>` : '<div class="muted">（沒有道具）</div>';
 const scenePage = (ev, sc, brk) => `<div class="pg ${brk ? 'pg-break' : ''}"><h2>${esc(sceneLabel(sc))} 的道具</h2>${tableHTML(rowsFor([sc]))}<div>${stageSVG(ev, sc)}</div></div>`;
 function renderOutput() {
   const ev = curEvent();
@@ -398,7 +403,7 @@ async function exportPNG() {
 function exportCSV() {
   const ev = curEvent(), q = v => `"${String(v).replace(/"/g, '""')}"`;
   const lines = [['場景（人）', '曲目／備註', '道具', '類別', '提供者', '寬(m)', '深(m)', '數量', '備註'].map(q).join(',')];
-  for (const x of outScenes(ev)) for (const { p, n } of rowsFor([x])) lines.push([x.owner, x.title, p.name, SRC[p.source].label, ownerKey(p), p.w, p.d, n, p.notes].map(q).join(','));
+  for (const x of outScenes(ev)) for (const { p, n } of rowsFor([x])) lines.push([x.owner, x.title, p.name, SRC[p.source].label, ownerKey(p), p.source === 'actor' ? '' : p.w, p.source === 'actor' ? '' : p.d, n, p.notes].map(q).join(','));
   download(`${fileBase(ev)}_道具清單${ui.outScene === '__all' ? '' : '_' + (outScenes(ev)[0]?.owner || '')}.csv`, new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv' }));
 }
 
@@ -496,6 +501,7 @@ document.addEventListener('submit', e => {
   if (k === 'prop') {
     const o = { name: f.get('name').trim(), source: f.get('source'), owner: f.get('owner').trim(), w: num(f.get('w'), .5), d: num(f.get('d'), .5), notes: f.get('notes').trim() };
     if (o.source === 'theatre') o.owner = '';
+    if (o.source === 'actor') { o.w = ACTOR; o.d = ACTOR; }
     if (ui.editProp) Object.assign(propOf(ui.editProp), o); else S.props.push({ id: uid(), ...o });
     ui.editProp = null;
   } else {
@@ -516,6 +522,7 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('change', e => {
   const t = e.target;
+  if (t.name === 'source' && t.form?.dataset.form === 'prop') t.form.querySelectorAll('.sizef').forEach(el => el.hidden = t.value === 'actor');
   if (t.dataset.nudge !== undefined) ui.nudge = parseFloat(t.value);
   if (t.id === 'sceneSel') { ui.outScene = t.value; render(); }
   if (t.id === 'groupChk') { ui.group = t.checked; render(); }

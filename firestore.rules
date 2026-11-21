@@ -4,7 +4,7 @@ service cloud.firestore {
     // 班級代碼就是路徑的一部分：知道代碼的人才讀得到／寫得到；沒有任何規則允許列出所有班級。
     match /classes/{code}/{coll}/{docId} {
       allow read, write: if code.size() >= 6 && code.size() <= 40
-                         && coll in ['stages', 'props', 'events'];
+                         && coll in ['stages', 'props', 'events', 'scenes'];
     }
   }
 }

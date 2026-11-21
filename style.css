@@ -57,3 +57,5 @@ dialog .row{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
   .sheet .pg{break-inside:avoid}
 }
 .sheet svg{width:100%;max-width:860px;height:auto;display:block}
+.scenebar .chips button{padding:4px 12px;font-size:14px}
+.scenebar .toolbar{margin:6px 0}

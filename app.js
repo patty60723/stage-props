@@ -31,10 +31,11 @@ const CUR_KEY = 'stage-props-cur', CODE_KEY = 'stage-props-code';
 const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { } };
 let legacy = null; try { legacy = JSON.parse(lsGet(KEY)); } catch { }
-let S = CFG ? { currentEventId: lsGet(CUR_KEY), stages: [], props: [], events: [] } : (legacy || seed());
-const cloud = { api: null, diff: null, code: null, ok: false, got: {}, stash: {}, fromCache: true, err: null, remote: { stages: [], props: [], events: [] } };
-const snap = s => JSON.parse(JSON.stringify({ stages: s.stages, props: s.props, events: s.events }));
-const ui = { tab: 'editor', sel: null, q: '', src: 'all', editProp: null, editStage: null, filter: '__all', group: false };
+let S = CFG ? { currentEventId: lsGet(CUR_KEY), stages: [], props: [], events: [], scenes: [] } : (legacy || seed());
+S.scenes = S.scenes || [];
+const cloud = { api: null, diff: null, code: null, ok: false, got: {}, stash: {}, fromCache: true, err: null, remote: { stages: [], props: [], events: [], scenes: [] } };
+const snap = s => JSON.parse(JSON.stringify({ stages: s.stages, props: s.props, events: s.events, scenes: s.scenes }));
+const ui = { tab: 'editor', sel: null, q: '', src: 'all', editProp: null, editStage: null, outScene: '__all', sceneId: null, group: false };
 
 /* 存檔：單機模式寫 localStorage；雲端模式把「和上次同步狀態的差異」送到 Firestore。回傳送出的寫入數 */
 function save() {
@@ -49,25 +50,46 @@ const stageOf = id => S.stages.find(s => s.id === id);
 const propOf = id => S.props.find(p => p.id === id);
 const curEvent = () => S.events.find(e => e.id === S.currentEventId) || null;
 const ownerKey = p => p.source === 'theatre' ? '劇場' : (p.owner || '（未指定）');
+const ME_KEY = 'stage-props-me';
+const scenesOf = eid => S.scenes.filter(s => s.eventId === eid).sort((a, b) => (a.t || 0) - (b.t || 0) || (a.id < b.id ? -1 : 1));
+function curScene() {
+  const ev = curEvent(); if (!ev) return null;
+  const l = scenesOf(ev.id), me = lsGet(ME_KEY);
+  return l.find(s => s.id === ui.sceneId) || (me && l.find(s => s.owner === me)) || l[0] || null;
+}
+const sceneLabel = s => (s.owner || '（未命名）') + (s.title ? '・' + s.title : '');
+/* 舊版：道具直接放在事件裡 → 轉成一個「全班（舊資料）」場景 */
+function migrateLegacy() {
+  let ch = false;
+  for (const e of S.events) {
+    if (!e.migrated && e.placements?.length) {
+      const sid = 'm' + e.id;
+      if (!S.scenes.some(x => x.id === sid)) S.scenes.push({ id: sid, eventId: e.id, owner: '全班（舊資料）', title: '', t: 0, placements: e.placements });
+      e.migrated = true; ch = true;
+    }
+    delete e.placements;
+  }
+  return ch;
+}
 const fmtEv = e => `${e.date || '未定日期'}｜${e.name}｜${stageOf(e.stageId)?.name || '?'}`;
 
 /* ---------- stage SVG（單位：公尺） ---------- */
-function stageSVG(ev, opt = {}) {
+function stageSVG(ev, sc, opt = {}) {
   const st = stageOf(ev.stageId); if (!st) return '';
-  const { w, d } = st, m = 0.6, top = 0.9, bot = 1.1;
+  const { w, d } = st, m = 0.6;
   const fs = Math.max(w, d) * 0.025;
   let g = '';
   for (let i = 1; i < w; i++) g += `<line x1="${i}" y1="0" x2="${i}" y2="${d}" stroke="#e5e7eb" stroke-width="${fs * 0.08}"/>`;
   for (let j = 1; j < d; j++) g += `<line x1="0" y1="${j}" x2="${w}" y2="${j}" stroke="#e5e7eb" stroke-width="${fs * 0.08}"/>`;
   g += `<line x1="${w / 2}" y1="0" x2="${w / 2}" y2="${d}" stroke="#9ca3af" stroke-width="${fs * 0.1}" stroke-dasharray="${fs * .5} ${fs * .4}"/>`;
   g += `<rect x="0" y="0" width="${w}" height="${d}" fill="none" stroke="#374151" stroke-width="${fs * 0.2}"/>`;
-  g += `<text x="0" y="${-fs * 0.8}" font-size="${fs * 1.1}" font-weight="600" fill="#111827">${esc(ev.name)}　${esc(ev.date || '')}</text>`;
+  g += `<text x="0" y="${-fs * 2.1}" font-size="${fs * 1.1}" font-weight="600" fill="#111827">${esc(ev.name)}　${esc(ev.date || '')}</text>`;
+  g += `<text x="0" y="${-fs * 0.8}" font-size="${fs * 1.1}" font-weight="600" fill="#7c3aed">${esc(sc ? sceneLabel(sc) : '')}</text>`;
   g += `<text x="${w}" y="${-fs * 0.8}" font-size="${fs}" fill="#6b7280" text-anchor="end">${esc(st.name)} ${w}×${d} m（後台）</text>`;
   g += `<text x="${w / 2}" y="${d + fs * 2.4}" font-size="${fs * 1.1}" fill="#6b7280" text-anchor="middle">▼ 觀眾席</text>`;
-  for (const pl of ev.placements) {
+  for (const pl of sc?.placements || []) {
     const p = propOf(pl.propId); if (!p) continue;
     const c = SRC[p.source].color;
-    const dim = opt.owner && opt.owner !== ownerKey(p);
     const sel = opt.interactive && ui.sel === pl.id;
     const shape = p.source === 'actor'
       ? `<ellipse rx="${p.w / 2}" ry="${p.d / 2}" fill="${c}" fill-opacity=".3" stroke="${c}" stroke-width="${fs * (sel ? .3 : .15)}"${sel ? ` stroke-dasharray="${fs * .4} ${fs * .3}"` : ''}/>`
@@ -77,9 +99,9 @@ function stageSVG(ev, opt = {}) {
     const ow = p.source !== 'theatre' && p.owner && p.owner !== p.name ? p.owner : '';
     const ot = ow ? (ow.length > maxc ? ow.slice(0, maxc - 1) + '…' : ow) : '';
     const text = `<g transform="translate(${pl.x} ${pl.y})" pointer-events="none"><text text-anchor="middle" font-size="${fs}" fill="#111827" y="${ot ? -fs * .1 : fs * .35}">${esc(nm)}</text>${ot ? `<text text-anchor="middle" font-size="${fs * .8}" fill="#4b5563" y="${fs * .95}">${esc(ot)}</text>` : ''}</g>`;
-    g += `<g opacity="${dim ? .15 : 1}"><g class="g" data-pid="${pl.id}" transform="translate(${pl.x} ${pl.y}) rotate(${pl.rot || 0})"><title>${esc(p.name)}</title>${shape}</g>${text}</g>`;
+    g += `<g><g class="g" data-pid="${pl.id}" transform="translate(${pl.x} ${pl.y}) rotate(${pl.rot || 0})"><title>${esc(p.name)}</title>${shape}</g>${text}</g>`;
   }
-  const vb = [-m, -top - fs, w + 2 * m, d + top + fs + bot];
+  const vb = [-m, -fs * 3.4, w + 2 * m, d + fs * 7.4];
   const size = opt.px ? ` width="${opt.px}" height="${Math.round(opt.px * vb[3] / vb[2])}"` : '';
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb.join(' ')}"${size} font-family="${FONT}"><rect x="${vb[0]}" y="${vb[1]}" width="${vb[2]}" height="${vb[3]}" fill="#fff"/>${g}</svg>`;
 }
@@ -104,16 +126,25 @@ function render() {
 }
 
 /* ---------- 排列舞台 ---------- */
+function sceneChipsHTML() {
+  const ev = curEvent(), cs = curScene(), l = ev ? scenesOf(ev.id) : [];
+  return l.length ? l.map(x => `<button data-scene="${x.id}" class="${cs && cs.id === x.id ? 'on' : ''}">${esc(sceneLabel(x))}</button>`).join('') : '<span class="muted">尚無場景</span>';
+}
 function renderEditor() {
   const ev = curEvent();
   if (!ev) return `<div class="card empty">還沒有事件。<br>一個「事件」＝一個呈現日期＋一個舞台，之後有新的演出日期或場地，再新增就好。<br><br><button class="primary" data-act="ev-new">＋ 新事件</button></div>`;
-  return `<div class="editor">
+  const sc = curScene();
+  const bar = `<div class="card scenebar"><h3>場景（每人一個）</h3><div class="chips" id="sceneChips">${sceneChipsHTML()}</div>
+    <div class="toolbar"><button class="primary small" data-act="sc-new">＋ 新增場景</button><button class="small" data-act="sc-edit">改名</button><button class="small" data-act="sc-dup">複製場景</button><button class="small danger" data-act="sc-del">刪除場景</button></div>
+    <div class="muted">每位同學各自有一個場景（自己的舞台排法）。點名字切換；請只改自己的。</div></div>`;
+  if (!sc) return bar + `<div class="card empty">這個事件還沒有場景。<br>請新增你自己的場景，就能開始排你的舞台。<br><br><button class="primary" data-act="sc-new">＋ 新增我的場景</button></div>`;
+  return bar + `<div class="editor">
   <div>
     <div class="card"><h3>道具庫</h3>
       <input id="q" placeholder="搜尋道具／人名" value="${esc(ui.q)}" style="width:100%">
       <div class="chips" id="srcChips"></div>
       <div class="plist" id="plist"></div>
-      <div class="muted" style="margin-top:6px">點「＋」放到舞台；同一道具可放多次，也可在多個事件重複使用。找不到？到「道具庫」新增。</div>
+      <div class="muted" style="margin-top:6px">點「＋」放到舞台；同一道具可放多次，也可在多個場景、事件重複使用。找不到？到「道具庫」新增。</div>
     </div>
     <div class="card" id="selPanel"></div>
   </div>
@@ -129,15 +160,15 @@ function renderPropList() {
   document.getElementById('plist').innerHTML = list.length ? list.map(p => `<div class="prow"><span class="dot ${p.source}"></span><div class="nm"><b>${esc(p.name)}</b><span class="muted">${esc(ownerKey(p))}・${p.w}×${p.d}m</span></div><button class="small" data-act="add-pl" data-id="${p.id}">＋</button></div>`).join('') : '<div class="muted">沒有符合的道具</div>';
 }
 function renderStageBox() {
-  const ev = curEvent(); if (!ev) return;
-  document.getElementById('stageBox').innerHTML = stageSVG(ev, { interactive: true });
+  const ev = curEvent(), box = document.getElementById('stageBox'); if (!ev || !box) return;
+  box.innerHTML = stageSVG(ev, curScene(), { interactive: true });
   renderSelPanel();
 }
 function renderSelPanel() {
-  const ev = curEvent(), el = document.getElementById('selPanel'); if (!el) return;
-  const pl = ev.placements.find(x => x.id === ui.sel), p = pl && propOf(pl.propId);
-  const counts = {}; ev.placements.forEach(x => counts[x.propId] = (counts[x.propId] || 0) + 1);
-  const summary = `<div class="muted">舞台上共 ${ev.placements.length} 件（${Object.keys(counts).length} 種）</div>`;
+  const sc = curScene(), el = document.getElementById('selPanel'); if (!el || !sc) return;
+  const pl = sc.placements.find(x => x.id === ui.sel), p = pl && propOf(pl.propId);
+  const counts = {}; sc.placements.forEach(x => counts[x.propId] = (counts[x.propId] || 0) + 1);
+  const summary = `<div class="muted">這個場景共 ${sc.placements.length} 件（${Object.keys(counts).length} 種）</div>`;
   if (!pl || !p) { el.innerHTML = `<h3>選取的道具</h3><div class="muted">點選舞台上的道具來編輯。</div>${summary}`; return; }
   el.innerHTML = `<h3>${esc(p.name)} <span class="tag ${p.source}">${SRC[p.source].label}</span></h3>
   <div class="grid2">
@@ -154,7 +185,7 @@ function svgPoint(svg, e) { const pt = svg.createSVGPoint(); pt.x = e.clientX; p
 function clampPl(pl) { const st = stageOf(curEvent().stageId); pl.x = Math.min(st.w, Math.max(0, r2(pl.x))); pl.y = Math.min(st.d, Math.max(0, r2(pl.y))); }
 document.addEventListener('pointerdown', e => {
   const g = e.target.closest?.('#stageBox .g'); if (!g) return;
-  const ev = curEvent(), pl = ev.placements.find(x => x.id === g.dataset.pid); if (!pl) return;
+  const sc = curScene(), pl = sc?.placements.find(x => x.id === g.dataset.pid); if (!pl) return;
   ui.sel = pl.id; renderStageBox();
   const g2 = document.querySelector(`#stageBox .g[data-pid="${pl.id}"]`), svg = g2.ownerSVGElement, pt = svgPoint(svg, e);
   drag = { pl, g: g2, svg, dx: pl.x - pt.x, dy: pl.y - pt.y, moved: false };
@@ -174,11 +205,11 @@ document.addEventListener('pointerup', () => {
 });
 document.addEventListener('keydown', e => {
   if (ui.tab !== 'editor' || !ui.sel || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName)) return;
-  const ev = curEvent(), pl = ev?.placements.find(x => x.id === ui.sel); if (!pl) return;
+  const sc = curScene(), pl = sc?.placements.find(x => x.id === ui.sel); if (!pl) return;
   const step = e.shiftKey ? 0.25 : 0.05; let used = true;
   if (e.key === 'ArrowLeft') pl.x -= step; else if (e.key === 'ArrowRight') pl.x += step;
   else if (e.key === 'ArrowUp') pl.y -= step; else if (e.key === 'ArrowDown') pl.y += step;
-  else if (e.key === 'Delete' || e.key === 'Backspace') { ev.placements = ev.placements.filter(x => x !== pl); ui.sel = null; }
+  else if (e.key === 'Delete' || e.key === 'Backspace') { sc.placements = sc.placements.filter(x => x !== pl); ui.sel = null; }
   else used = false;
   if (used) { e.preventDefault(); if (ui.sel) clampPl(pl); save(); renderStageBox(); }
 });
@@ -187,10 +218,10 @@ document.addEventListener('keydown', e => {
 function renderProps() {
   const ep = S.props.find(p => p.id === ui.editProp) || { name: '', source: 'personal', owner: '', w: 0.5, d: 0.5, notes: '' };
   const owners = [...new Set(S.props.map(p => p.owner).filter(Boolean))];
-  const usage = id => S.events.filter(e => e.placements.some(x => x.propId === id)).length;
+  const usage = id => S.scenes.filter(sc => sc.placements.some(x => x.propId === id)).length;
   const groups = Object.keys(SRC).map(k => {
     const l = S.props.filter(p => p.source === k);
-    return `<h3><span class="dot ${k}"></span>${SRC[k].label}（${l.length}）</h3>` + (l.length ? `<table><tr><th>名稱</th><th>提供者</th><th>尺寸 寬×深(m)</th><th>已用於</th><th></th></tr>${l.map(p => `<tr><td>${esc(p.name)}${p.notes ? `<div class="muted">${esc(p.notes)}</div>` : ''}</td><td>${esc(p.source === 'theatre' ? '劇場' : p.owner)}</td><td>${p.w}×${p.d}</td><td>${usage(p.id)} 個事件</td><td style="white-space:nowrap"><button class="small" data-act="edit-prop" data-id="${p.id}">編輯</button> <button class="small danger" data-act="del-prop" data-id="${p.id}">刪除</button></td></tr>`).join('')}</table>` : '<div class="muted">（無）</div>');
+    return `<h3><span class="dot ${k}"></span>${SRC[k].label}（${l.length}）</h3>` + (l.length ? `<table><tr><th>名稱</th><th>提供者</th><th>尺寸 寬×深(m)</th><th>已用於</th><th></th></tr>${l.map(p => `<tr><td>${esc(p.name)}${p.notes ? `<div class="muted">${esc(p.notes)}</div>` : ''}</td><td>${esc(p.source === 'theatre' ? '劇場' : p.owner)}</td><td>${p.w}×${p.d}</td><td>${usage(p.id)} 個場景</td><td style="white-space:nowrap"><button class="small" data-act="edit-prop" data-id="${p.id}">編輯</button> <button class="small danger" data-act="del-prop" data-id="${p.id}">刪除</button></td></tr>`).join('')}</table>` : '<div class="muted">（無）</div>');
   }).join('');
   return `<div class="card"><h2>${ui.editProp ? '編輯道具' : '新增道具'}</h2>
   <form data-form="prop"><div class="grid2">
@@ -219,56 +250,59 @@ function renderStages() {
 }
 
 /* ---------- 輸出 ---------- */
-function eventRows(ev, owner) {
+const ORDER = { theatre: 0, personal: 1, actor: 2 };
+function rowsFor(scs) {
   const map = new Map();
-  for (const pl of ev.placements) {
+  for (const sc of scs) for (const pl of sc.placements) {
     const p = propOf(pl.propId); if (!p) continue;
-    if (owner && owner !== '__all' && ownerKey(p) !== owner) continue;
-    const r = map.get(p.id) || { p, n: 0 }; r.n++; map.set(p.id, r);
+    const r = map.get(p.id) || { p, n: 0, users: new Set() }; r.n++; r.users.add(sc.owner || '（未命名）'); map.set(p.id, r);
   }
-  const order = { theatre: 0, personal: 1, actor: 2 };
-  return [...map.values()].sort((a, b) => order[a.p.source] - order[b.p.source] || ownerKey(a.p).localeCompare(ownerKey(b.p), 'zh-Hant') || a.p.name.localeCompare(b.p.name, 'zh-Hant'));
+  return [...map.values()].sort((a, b) => ORDER[a.p.source] - ORDER[b.p.source] || ownerKey(a.p).localeCompare(ownerKey(b.p), 'zh-Hant') || a.p.name.localeCompare(b.p.name, 'zh-Hant'));
 }
-const tableHTML = rows => rows.length ? `<table><tr><th>道具</th><th>類別</th><th>提供者</th><th>尺寸 (m)</th><th>數量</th></tr>${rows.map(({ p, n }) => `<tr><td>${esc(p.name)}</td><td>${SRC[p.source].label}</td><td>${esc(ownerKey(p))}</td><td>${p.w}×${p.d}</td><td>${n}</td></tr>`).join('')}</table>` : '<div class="muted">（沒有道具）</div>';
+const tableHTML = (rows, users) => rows.length ? `<table><tr><th>道具</th><th>類別</th><th>提供者</th><th>尺寸 (m)</th><th>數量</th>${users ? '<th>使用場景</th>' : ''}</tr>${rows.map(({ p, n, users: u }) => `<tr><td>${esc(p.name)}</td><td>${SRC[p.source].label}</td><td>${esc(ownerKey(p))}</td><td>${p.w}×${p.d}</td><td>${n}</td>${users ? `<td>${esc([...u].join('、'))}</td>` : ''}</tr>`).join('')}</table>` : '<div class="muted">（沒有道具）</div>';
+const scenePage = (ev, sc, brk) => `<div class="pg ${brk ? 'pg-break' : ''}"><h2>${esc(sceneLabel(sc))} 的道具</h2>${tableHTML(rowsFor([sc]))}<div>${stageSVG(ev, sc)}</div></div>`;
 function renderOutput() {
   const ev = curEvent();
   if (!ev) return '<div class="card empty">請先建立事件。</div>';
-  const owners = [...new Set(ev.placements.map(x => propOf(x.propId)).filter(Boolean).map(ownerKey))].sort((a, b) => a.localeCompare(b, 'zh-Hant'));
-  if (ui.filter !== '__all' && !owners.includes(ui.filter)) ui.filter = '__all';
-  const all = ui.filter === '__all';
+  const scs = scenesOf(ev.id);
+  if (ui.outScene !== '__all' && !scs.some(x => x.id === ui.outScene)) ui.outScene = '__all';
+  const all = ui.outScene === '__all', one = scs.find(x => x.id === ui.outScene);
   let body;
-  if (all && ui.group) {
-    body = owners.map((o, i) => `<div class="pg ${i ? 'pg-break' : ''}"><h2>${esc(o)} 的道具</h2>${tableHTML(eventRows(ev, o))}<div>${stageSVG(ev, { owner: o })}</div></div>`).join('') || '<div class="muted">（沒有道具）</div>';
-  } else {
-    body = `<div class="pg"><h2>${all ? '全部道具清單' : esc(ui.filter) + ' 的道具'}</h2>${tableHTML(eventRows(ev, ui.filter))}</div><div class="pg"><h2>舞台俯視圖</h2>${stageSVG(ev, all ? {} : { owner: ui.filter })}${all ? '' : '<div class="muted">淡色＝其他人的道具</div>'}</div>`;
-  }
+  if (!scs.length) body = '<div class="muted">這個事件還沒有場景。</div>';
+  else if (!all) body = scenePage(ev, one, false);
+  else body = `<div class="pg"><h2>全班道具總清單</h2>${tableHTML(rowsFor(scs), true)}</div>` +
+    scs.map(x => ui.group ? scenePage(ev, x, true) : `<div class="pg"><h2>${esc(sceneLabel(x))}・舞台俯視圖</h2>${stageSVG(ev, x)}</div>`).join('');
   return `<div class="card no-print"><div class="toolbar">
-    <label>顯示：<select id="ownerSel"><option value="__all">全部人</option>${owners.map(o => `<option${o === ui.filter ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select></label>
-    ${all ? `<label><input type="checkbox" id="groupChk"${ui.group ? ' checked' : ''}> 每人一頁</label>` : ''}
+    <label>顯示：<select id="sceneSel"><option value="__all">全班（總清單）</option>${scs.map(x => `<option value="${x.id}"${x.id === ui.outScene ? ' selected' : ''}>${esc(sceneLabel(x))}</option>`).join('')}</select></label>
+    ${all ? `<label><input type="checkbox" id="groupChk"${ui.group ? ' checked' : ''}> 每人一頁（各自清單＋俯視圖）</label>` : ''}
     <button class="primary" data-act="print">列印 / 存成 PDF</button>
-    <button data-act="png">下載俯視圖 PNG</button>
+    <button data-act="png">下載俯視圖 PNG${all ? '（每人一張）' : ''}</button>
     <button data-act="csv">下載清單 CSV</button></div></div>
   <div class="card sheet"><h1 style="margin:0 0 2px;font-size:20px">${esc(ev.name)}</h1><div class="muted">${esc(ev.date || '')}　${esc(stageOf(ev.stageId)?.name || '')} ${stageOf(ev.stageId)?.w}×${stageOf(ev.stageId)?.d} m</div>${body}</div>`;
 }
 function download(name, blob) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); }
 const fileBase = ev => `${ev.date || 'event'}_${ev.name}`.replace(/[\\/:*?"<>|\s]+/g, '_');
-function exportPNG() {
-  const ev = curEvent(), owner = ui.filter === '__all' ? null : ui.filter;
-  const svg = stageSVG(ev, { owner, px: 1800 });
-  const img = new Image();
-  img.onload = () => {
-    const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
-    const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); x.drawImage(img, 0, 0);
-    c.toBlob(b => download(`${fileBase(ev)}_俯視圖${owner ? '_' + owner : ''}.png`, b));
-  };
-  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+const outScenes = ev => ui.outScene === '__all' ? scenesOf(ev.id) : scenesOf(ev.id).filter(x => x.id === ui.outScene);
+function svgToPNG(svg, name) {
+  return new Promise(res => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+      const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); x.drawImage(img, 0, 0);
+      c.toBlob(b => { download(name, b); setTimeout(res, 400); });
+    };
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  });
+}
+async function exportPNG() {
+  const ev = curEvent();
+  for (const x of outScenes(ev)) await svgToPNG(stageSVG(ev, x, { px: 1800 }), `${fileBase(ev)}_${x.owner || '場景'}.png`);
 }
 function exportCSV() {
-  const ev = curEvent(), rows = eventRows(ev, ui.filter);
-  const q = v => `"${String(v).replace(/"/g, '""')}"`;
-  const lines = [['道具', '類別', '提供者', '寬(m)', '深(m)', '數量', '備註'].map(q).join(',')]
-    .concat(rows.map(({ p, n }) => [p.name, SRC[p.source].label, ownerKey(p), p.w, p.d, n, p.notes].map(q).join(',')));
-  download(`${fileBase(ev)}_道具清單${ui.filter === '__all' ? '' : '_' + ui.filter}.csv`, new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' }));
+  const ev = curEvent(), q = v => `"${String(v).replace(/"/g, '""')}"`;
+  const lines = [['場景（人）', '曲目／備註', '道具', '類別', '提供者', '寬(m)', '深(m)', '數量', '備註'].map(q).join(',')];
+  for (const x of outScenes(ev)) for (const { p, n } of rowsFor([x])) lines.push([x.owner, x.title, p.name, SRC[p.source].label, ownerKey(p), p.w, p.d, n, p.notes].map(q).join(','));
+  download(`${fileBase(ev)}_道具清單${ui.outScene === '__all' ? '' : '_' + (outScenes(ev)[0]?.owner || '')}.csv`, new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv' }));
 }
 
 /* ---------- 對話框（事件） ---------- */
@@ -287,32 +321,58 @@ function eventDialog(mode) {
   document.getElementById('evForm').onsubmit = ev => {
     const f = new FormData(ev.target);
     if (mode === 'edit') { Object.assign(cur, { name: f.get('name'), date: f.get('date'), stageId: f.get('stage') }); }
-    else { const n = { id: uid(), name: f.get('name'), date: f.get('date'), stageId: f.get('stage'), placements: [] }; S.events.push(n); S.currentEventId = n.id; ui.sel = null; }
+    else { const n = { id: uid(), name: f.get('name'), date: f.get('date'), stageId: f.get('stage'), migrated: true }; S.events.push(n); S.currentEventId = n.id; ui.sel = null; ui.sceneId = null; }
     save(); render();
+  };
+}
+
+function sceneDialog(mode) {
+  const ev = curEvent(), cur = curScene(); if (!ev || (mode === 'edit' && !cur)) return;
+  const e = mode === 'edit' ? cur : { owner: lsGet(ME_KEY) || '', title: '' };
+  const names = [...new Set([...S.scenes.map(x => x.owner), ...S.props.map(p => p.owner)].filter(Boolean))];
+  const dlg = document.getElementById('dlg');
+  dlg.innerHTML = `<form id="scForm"><h3>${mode === 'edit' ? '修改場景' : '新增場景'}</h3>
+  <label class="f">誰的場景（姓名）<input name="owner" required list="scNames" value="${esc(e.owner)}" placeholder="例：小明"></label><br>
+  <label class="f">曲目／備註（選填）<input name="title" value="${esc(e.title)}" placeholder="例：《月亮代表我的心》"></label>
+  <datalist id="scNames">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+  <div class="row"><button type="button" onclick="dlg.close()">取消</button><button class="primary">${mode === 'edit' ? '儲存' : '建立'}</button></div></form>`;
+  dlg.showModal();
+  document.getElementById('scForm').onsubmit = f => {
+    f.preventDefault(); const fd = new FormData(f.target), owner = fd.get('owner').trim(), title = fd.get('title').trim(); dlg.close();
+    if (mode === 'edit') Object.assign(cur, { owner, title });
+    else { const n = { id: uid(), eventId: ev.id, owner, title, t: Date.now(), placements: [] }; S.scenes.push(n); ui.sceneId = n.id; lsSet(ME_KEY, owner); }
+    ui.sel = null; save(); render();
   };
 }
 
 /* ---------- 事件委派 ---------- */
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-act],[data-tab],[data-src]'); if (!t) return;
+  const t = e.target.closest('[data-act],[data-tab],[data-src],[data-scene]'); if (!t) return;
   if (t.dataset.tab) { ui.tab = t.dataset.tab; return render(); }
+  if (t.dataset.scene) { ui.sceneId = t.dataset.scene; ui.sel = null; return render(); }
   if (t.dataset.src) { ui.src = t.dataset.src; return renderPropList(); }
-  const ev = curEvent(), id = t.dataset.id;
+  const ev = curEvent(), sc = curScene(), id = t.dataset.id;
   switch (t.dataset.act) {
     case 'ev-new': if (!S.stages.length) { alert('請先到「舞台規格」新增舞台'); ui.tab = 'stages'; return render(); } return eventDialog('new');
     case 'ev-edit': return eventDialog('edit');
-    case 'ev-dup': if (!ev) return; { const n = JSON.parse(JSON.stringify(ev)); n.id = uid(); n.name += '（複製）'; n.placements.forEach(p => p.id = uid()); S.events.push(n); S.currentEventId = n.id; save(); return render(); }
-    case 'ev-del': if (ev && confirm(`刪除事件「${ev.name}」？（道具庫不受影響）`)) { S.events = S.events.filter(x => x !== ev); S.currentEventId = S.events[0]?.id || null; ui.sel = null; save(); render(); } return;
-    case 'add-pl': { const p = propOf(id), st = stageOf(ev.stageId); const n = ev.placements.length; const pl = { id: uid(), t: Date.now(), propId: id, x: r2(st.w / 2 + (n % 5 - 2) * 0.3), y: r2(st.d / 2 + (n % 5 - 2) * 0.3), rot: 0 }; ev.placements.push(pl); ui.sel = pl.id; save(); return renderStageBox(); }
-    case 'pl-rot': { const pl = ev.placements.find(x => x.id === ui.sel); if (pl) { pl.rot = ((pl.rot || 0) + 90) % 360; save(); renderStageBox(); } return; }
-    case 'pl-dup': { const pl = ev.placements.find(x => x.id === ui.sel); if (pl) { const n = { ...pl, id: uid(), t: Date.now(), x: pl.x + .3, y: pl.y + .3 }; clampPl(n); ev.placements.push(n); ui.sel = n.id; save(); renderStageBox(); } return; }
-    case 'pl-del': ev.placements = ev.placements.filter(x => x.id !== ui.sel); ui.sel = null; save(); return renderStageBox();
+    case 'ev-dup': if (!ev) return; { const n = JSON.parse(JSON.stringify(ev)); n.id = uid(); n.name += '（複製）'; n.migrated = true; S.events.push(n);
+      for (const x of scenesOf(ev.id)) { const c = JSON.parse(JSON.stringify(x)); c.id = uid(); c.eventId = n.id; c.placements.forEach(p => p.id = uid()); S.scenes.push(c); }
+      S.currentEventId = n.id; ui.sceneId = null; save(); return render(); }
+    case 'ev-del': if (ev && confirm(`刪除事件「${ev.name}」？（道具庫不受影響）`)) { S.events = S.events.filter(x => x !== ev); S.scenes = S.scenes.filter(x => x.eventId !== ev.id); S.currentEventId = S.events[0]?.id || null; ui.sel = null; save(); render(); } return;
+    case 'add-pl': { if (!sc) return alert('請先新增你的場景'); const st = stageOf(ev.stageId); const n = sc.placements.length; const pl = { id: uid(), t: Date.now(), propId: id, x: r2(st.w / 2 + (n % 5 - 2) * 0.3), y: r2(st.d / 2 + (n % 5 - 2) * 0.3), rot: 0 }; sc.placements.push(pl); ui.sel = pl.id; save(); return renderStageBox(); }
+    case 'pl-rot': { const pl = sc?.placements.find(x => x.id === ui.sel); if (pl) { pl.rot = ((pl.rot || 0) + 90) % 360; save(); renderStageBox(); } return; }
+    case 'pl-dup': { const pl = sc?.placements.find(x => x.id === ui.sel); if (pl) { const n = { ...pl, id: uid(), t: Date.now(), x: pl.x + .3, y: pl.y + .3 }; clampPl(n); sc.placements.push(n); ui.sel = n.id; save(); renderStageBox(); } return; }
+    case 'pl-del': if (sc) sc.placements = sc.placements.filter(x => x.id !== ui.sel); ui.sel = null; save(); return renderStageBox();
     case 'edit-prop': ui.editProp = id; return render();
     case 'cancel-prop': ui.editProp = null; return render();
-    case 'del-prop': { const used = S.events.filter(x => x.placements.some(p => p.propId === id)).length; if (confirm(`刪除道具「${propOf(id).name}」？` + (used ? `\n它會同時從 ${used} 個事件的舞台上移除。` : ''))) { S.props = S.props.filter(p => p.id !== id); S.events.forEach(x => x.placements = x.placements.filter(p => p.propId !== id)); save(); render(); } return; }
+    case 'del-prop': { const used = S.scenes.filter(x => x.placements.some(p => p.propId === id)).length; if (confirm(`刪除道具「${propOf(id).name}」？` + (used ? `\n它會同時從 ${used} 個場景的舞台上移除。` : ''))) { S.props = S.props.filter(p => p.id !== id); S.scenes.forEach(x => x.placements = x.placements.filter(p => p.propId !== id)); save(); render(); } return; }
     case 'edit-stage': ui.editStage = id; return render();
     case 'cancel-stage': ui.editStage = null; return render();
     case 'del-stage': { if (S.events.some(x => x.stageId === id)) return alert('有事件正在使用這個舞台，無法刪除。'); S.stages = S.stages.filter(s => s.id !== id); save(); return render(); }
+    case 'sc-new': return sceneDialog('new');
+    case 'sc-edit': return sceneDialog('edit');
+    case 'sc-dup': if (!sc) return; { const c = JSON.parse(JSON.stringify(sc)); c.id = uid(); c.t = Date.now(); c.owner += '（複製）'; c.placements.forEach(p => p.id = uid()); S.scenes.push(c); ui.sceneId = c.id; ui.sel = null; save(); return render(); }
+    case 'sc-del': if (sc && confirm(`刪除場景「${sceneLabel(sc)}」？`)) { S.scenes = S.scenes.filter(x => x !== sc); ui.sceneId = null; ui.sel = null; save(); render(); } return;
     case 'print': return window.print();
     case 'png': return exportPNG();
     case 'csv': return exportCSV();
@@ -340,20 +400,20 @@ document.addEventListener('input', e => {
   const t = e.target;
   if (t.id === 'q') { ui.q = t.value; renderPropList(); }
   if (t.dataset.pl) {
-    const pl = curEvent().placements.find(x => x.id === ui.sel); if (!pl) return;
+    const pl = curScene()?.placements.find(x => x.id === ui.sel); if (!pl) return;
     pl[t.dataset.pl] = parseFloat(t.value) || 0; if (t.dataset.pl !== 'rot') clampPl(pl);
-    save(); document.getElementById('stageBox').innerHTML = stageSVG(curEvent(), { interactive: true });
+    save(); document.getElementById('stageBox').innerHTML = stageSVG(curEvent(), curScene(), { interactive: true });
   }
 });
 document.addEventListener('change', e => {
   const t = e.target;
-  if (t.id === 'eventSelect') { S.currentEventId = t.value; ui.sel = null; save(); render(); }
-  if (t.id === 'ownerSel') { ui.filter = t.value; render(); }
+  if (t.id === 'eventSelect') { S.currentEventId = t.value; ui.sel = null; ui.sceneId = null; save(); render(); }
+  if (t.id === 'sceneSel') { ui.outScene = t.value; render(); }
   if (t.id === 'groupChk') { ui.group = t.checked; render(); }
   if (t.id === 'importFile' && t.files[0]) {
     const r = new FileReader();
     r.onload = () => {
-      try { const d = JSON.parse(r.result); if (!d.stages || !d.props || !d.events) throw 0; if (!confirm(CFG ? '還原會取代「全班共用」的所有資料，確定嗎？' : '還原會取代目前所有資料，確定嗎？')) return; S = d; save(); render(); }
+      try { const d = JSON.parse(r.result); if (!d.stages || !d.props || !d.events) throw 0; if (!confirm(CFG ? '還原會取代「全班共用」的所有資料，確定嗎？' : '還原會取代目前所有資料，確定嗎？')) return; S = d; S.scenes = S.scenes || []; migrateLegacy(); save(); render(); }
       catch { alert('這不是有效的備份檔'); }
     };
     r.readAsText(t.files[0]); t.value = '';
@@ -376,21 +436,22 @@ function askCode(cancelable) {
 }
 function applyRemote(name, docs) {
   if (drag) { cloud.stash[name] = docs; return; }            // 拖曳中先不動畫面，放開後再套用
-  S[name] = name === 'events' ? docs.map(({ id, ...r }) => cloud.diff.evFromDoc(id, r)) : docs;
+  S[name] = cloud.diff.fromDocs(name, docs);
   cloud.remote[name] = JSON.parse(JSON.stringify(S[name]));
 }
 function flushStash(wrote) {
   const st = cloud.stash; cloud.stash = {}; let any = false;
-  for (const [name, docs] of Object.entries(st)) { if (name === 'events' && wrote) continue; applyRemote(name, docs); any = true; }
+  for (const [name, docs] of Object.entries(st)) { if (name === 'scenes' && wrote) continue; applyRemote(name, docs); any = true; }
   if (any) refreshRemote();
 }
 function onData(name, docs, fromCache) {
   cloud.fromCache = fromCache; cloud.got[name] = true; cloud.err = null;
   applyRemote(name, docs);
   if (!cloud.ok) {
-    if (!['stages', 'props', 'events'].every(k => cloud.got[k])) return;
-    cloud.ok = true; maybeMigrate(); render(); return;
+    if (!['stages', 'props', 'events', 'scenes'].every(k => cloud.got[k])) return;
+    cloud.ok = true; maybeMigrate(); if (migrateLegacy()) save(); render(); return;
   }
+  if (migrateLegacy()) save();
   refreshRemote();
 }
 let warned = false;
@@ -406,20 +467,22 @@ function refreshRemote() {
   if (!curEvent() && S.events.length) S.currentEventId = S.events[0].id;
   if (ui.tab === 'editor') {
     const box = document.getElementById('stageBox');
-    if (!curEvent() || !box) { if (!inForm) render(); return; }
-    box.innerHTML = stageSVG(curEvent(), { interactive: true }); renderPropList();
+    if (!curEvent() || !curScene() || !box) { if (!inForm) render(); return; }
+    const chips = document.getElementById('sceneChips'); if (chips) chips.innerHTML = sceneChipsHTML();
+    box.innerHTML = stageSVG(curEvent(), curScene(), { interactive: true }); renderPropList();
     if (!act?.closest?.('#selPanel')) renderSelPanel();
   } else if (!inForm) render();
 }
 function maybeMigrate() {                                    // 雲端是空的、這台瀏覽器有舊資料 → 問要不要上傳
-  if (S.stages.length || S.props.length || S.events.length) return;
+  if (S.stages.length || S.props.length || S.events.length || S.scenes.length) return;
   const flag = 'stage-props-asked-' + cloud.code; if (lsGet(flag)) return; lsSet(flag, '1');
   if (!legacy || !(legacy.events?.length || legacy.props?.length > 4 || legacy.stages?.length > 1)) return;
   if (confirm('雲端還沒有任何資料。要把這台瀏覽器裡原本的資料上傳到班級共用嗎？')) {
-    S.stages = legacy.stages || []; S.props = legacy.props || []; S.events = legacy.events || []; S.currentEventId = legacy.currentEventId || null; save();
+    S.stages = legacy.stages || []; S.props = legacy.props || []; S.events = legacy.events || []; S.scenes = legacy.scenes || []; S.currentEventId = legacy.currentEventId || null; migrateLegacy(); save();
   }
 }
 async function boot() {
+  if (!CFG && migrateLegacy()) save();
   render();
   if (!CFG) return;
   let code = null; const m = location.hash.match(/[#&]c=([^&]+)/);

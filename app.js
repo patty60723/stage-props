@@ -1,5 +1,5 @@
 'use strict';
-/* 舞台道具排列 — 純前端，資料存在瀏覽器 localStorage，可備份/還原 JSON */
+/* 舞台道具排列 — 純前端；資料存在 Firebase Firestore（以班級代碼區分），未設定時存在瀏覽器 localStorage */
 const KEY = 'stage-props-v1';
 const SRC = {
   theatre: { label: '劇場提供', color: '#3b82f6' },
@@ -488,7 +488,6 @@ document.addEventListener('click', e => {
       const url = location.origin + location.pathname + '#c=' + encodeURIComponent(cloud.code) + (ev0 ? '&e=' + encodeURIComponent(ev0.id) : '');
       (navigator.clipboard?.writeText(url) || Promise.reject()).then(() => alert((ev0 ? '已複製「這個事件」的連結' : '已複製班級連結') + '，貼給同學即可直接加入：\n' + url), () => prompt('複製這個連結給同學：', url)); return; }
     case 'switch-code': return askCode(true).then(c => { if (c && c !== cloud.code) { lsSet(CODE_KEY, c); location.reload(); } });
-    case 'export-data': return download(`舞台道具備份_${new Date().toISOString().slice(0, 10)}.json`, new Blob([JSON.stringify(S, null, 1)], { type: 'application/json' }));
   }
 });
 document.addEventListener('submit', e => {
@@ -520,14 +519,6 @@ document.addEventListener('change', e => {
   if (t.dataset.nudge !== undefined) ui.nudge = parseFloat(t.value);
   if (t.id === 'sceneSel') { ui.outScene = t.value; render(); }
   if (t.id === 'groupChk') { ui.group = t.checked; render(); }
-  if (t.id === 'importFile' && t.files[0]) {
-    const r = new FileReader();
-    r.onload = () => {
-      try { const d = JSON.parse(r.result); if (!d.stages || !d.props || !d.events) throw 0; if (!confirm(CFG ? '還原會取代「全班共用」的所有資料，確定嗎？' : '還原會取代目前所有資料，確定嗎？')) return; S = d; S.scenes = S.scenes || []; migrateLegacy(); save(); render(); }
-      catch { alert('這不是有效的備份檔'); }
-    };
-    r.readAsText(t.files[0]); t.value = '';
-  }
 });
 /* ---------- 雲端（Firebase）---------- */
 const validCode = c => /^[A-Za-z0-9_-]{6,40}$/.test(c || '');

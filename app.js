@@ -113,7 +113,7 @@ function stageSVG(ev, sc, opt = {}) {
 /* ---------- 版面 ---------- */
 function renderHeader() {
   const cb = document.getElementById('cloudBox');
-  if (cb) cb.innerHTML = CFG && cloud.code ? `<span class="muted" title="${cloud.err ? esc(cloud.err) : ''}">☁ 班級 ${esc(cloud.code)}・${cloud.err ? '⚠ 無法存取雲端' : (!navigator.onLine || cloud.fromCache ? '連線中／離線' : '已同步')}</span> <button data-act="share">分享連結</button> <button data-act="switch-code">換代碼</button>` : '';
+  if (cb) cb.innerHTML = CFG && cloud.code ? `<span class="muted" title="${cloud.err ? esc(cloud.err) : ''}">☁ 班級 ${esc(cloud.code)}・${cloud.err ? '⚠ 無法存取雲端' : (!navigator.onLine || cloud.fromCache ? '連線中／離線' : '已同步')}</span> <button data-act="share" title="複製班級連結（同學點開就加入同一個班級）">分享班級</button> <button data-act="switch-code">換代碼</button>` : '';
   document.getElementById('tabs').hidden = !(ui.view === 'event' && curEvent());
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === ui.tab));
 }
@@ -164,7 +164,7 @@ function renderHome() {
 }
 function eventBar() {
   const e = curEvent(), st = stageOf(e.stageId);
-  return `<div class="card no-print crumb"><button class="small" data-act="home">← 所有事件</button><div class="crumbt"><b>${esc(e.name)}</b> <span class="muted">${esc(e.date || '未定日期')}・${esc(st ? st.name + ' ' + st.w + '×' + st.d + 'm' : '（舞台已刪除）')}</span></div><button class="small" data-act="ev-edit">編輯事件</button><button class="small" data-act="ev-dup">複製事件</button><button class="small danger" data-act="ev-del">刪除事件</button></div>`;
+  return `<div class="card no-print crumb"><button class="small" data-act="home">← 所有事件</button><div class="crumbt"><b>${esc(e.name)}</b> <span class="muted">${esc(e.date || '未定日期')}・${esc(st ? st.name + ' ' + st.w + '×' + st.d + 'm' : '（舞台已刪除）')}</span></div>${CFG && cloud.code ? '<button class="small" data-act="share-ev">分享事件連結</button>' : ''}<button class="small" data-act="ev-edit">編輯事件</button><button class="small" data-act="ev-dup">複製事件</button><button class="small danger" data-act="ev-del">刪除事件</button></div>`;
 }
 
 /* ---------- 排列舞台 ---------- */
@@ -483,7 +483,10 @@ document.addEventListener('click', e => {
     case 'print': return window.print();
     case 'png': return exportPNG();
     case 'csv': return exportCSV();
-    case 'share': { const url = location.origin + location.pathname + '#c=' + encodeURIComponent(cloud.code) + (routeHash() ? '&' + routeHash().slice(1) : ''); (navigator.clipboard?.writeText(url) || Promise.reject()).then(() => alert('已複製連結，貼給同學即可直接加入：\n' + url), () => prompt('複製這個連結給同學：', url)); return; }
+    case 'share': case 'share-ev': {                          // 分享連結只帶 班級代碼(c)＋事件(e)；分頁、場景請直接複製網址列
+      const ev0 = t.dataset.act === 'share-ev' ? curEvent() : null;
+      const url = location.origin + location.pathname + '#c=' + encodeURIComponent(cloud.code) + (ev0 ? '&e=' + encodeURIComponent(ev0.id) : '');
+      (navigator.clipboard?.writeText(url) || Promise.reject()).then(() => alert((ev0 ? '已複製「這個事件」的連結' : '已複製班級連結') + '，貼給同學即可直接加入：\n' + url), () => prompt('複製這個連結給同學：', url)); return; }
     case 'switch-code': return askCode(true).then(c => { if (c && c !== cloud.code) { lsSet(CODE_KEY, c); location.reload(); } });
     case 'export-data': return download(`舞台道具備份_${new Date().toISOString().slice(0, 10)}.json`, new Blob([JSON.stringify(S, null, 1)], { type: 'application/json' }));
   }

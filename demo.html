@@ -39,6 +39,7 @@ th,td{text-align:left;padding:3px 8px;border-bottom:1px solid var(--line);font-s
   <label>事件<select id="ev"></select></label>
   <label>場景<select id="sc"></select></label>
   <div><div class="muted" style="margin-bottom:2px">檢視</div><div class="views" id="views"></div></div>
+  <label style="flex-direction:row;align-items:center;gap:6px;color:var(--ink)"><input type="checkbox" id="ctext" checked> 文字顏色依類別</label>
   <button class="primary" id="print" style="margin-left:auto">列印目前檢視</button>
 </div>
 <div id="status" class="note noprint"></div>
@@ -47,7 +48,8 @@ th,td{text-align:left;padding:3px 8px;border-bottom:1px solid var(--line);font-s
 <script src="firebase-config.js"></script>
 <script type="module">
 import { fromDocs } from './diff.js';
-const SRC = { theatre: { label: '劇場提供', color: '#3b82f6' }, personal: { label: '個人提供', color: '#f59e0b' }, actor: { label: '演員', color: '#10b981' } };
+const SRC = { theatre: { label: '劇場提供', color: '#3b82f6', text: '#1d4ed8' }, personal: { label: '個人提供', color: '#f59e0b', text: '#b45309' }, actor: { label: '演員', color: '#10b981', text: '#047857' } };
+let colorText = true;   // 文字顏色依類別（劇場藍／個人橘／演員綠）
 const ORDER = { theatre: 0, personal: 1, actor: 2 };
 const FONT = "system-ui,'Noto Sans TC','Microsoft JhengHei',sans-serif";
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -94,11 +96,12 @@ function boxHitsShape(box, it) {                                // 文字框是�
 function build(D, ev, sc, mode) {
   const st = D.stages.find(s => s.id === ev.stageId), P = id => D.props.find(p => p.id === id);
   const { w, d } = st, m = 0.9, fs = Math.max(w, d) * 0.025;
-  const items = sc.placements.map(pl => ({ pl, p: P(pl.propId) })).filter(x => x.p).map(x => ({ ...x, sz: psize(x.p), c: SRC[x.p.source].color }));
+  const items = sc.placements.map(pl => ({ pl, p: P(pl.propId) })).filter(x => x.p).map(x => ({ ...x, sz: psize(x.p), c: SRC[x.p.source].color, tc: SRC[x.p.source].text }));
   const boxes = items.map(i => aabb(i.pl.x, i.pl.y, i.sz.w, i.sz.d, i.pl.rot || 0));
   const order = items.map((_, k) => k).sort((a, b) => items[b].sz.w * items[b].sz.d - items[a].sz.w * items[a].sz.d || a - b);   // 大的先畫，小的疊在上面
   const rank = []; order.forEach((k, r) => rank[k] = r);
-  const lines = [], labels = [], textEl = (t, cx, cy, f) => `<text x="${cx}" y="${cy + f * .35}" font-size="${f}" text-anchor="middle" fill="#111827" ${halo(f)}>${esc(t)}</text>`;
+  let TC = '#111827';
+  const lines = [], labels = [], textEl = (t, cx, cy, f) => `<text x="${cx}" y="${cy + f * .35}" font-size="${f}" font-weight="${colorText ? 600 : 400}" text-anchor="middle" fill="${colorText ? TC : '#111827'}" ${halo(f)}>${esc(t)}</text>`;
   const lw = (t, f) => [...t].length * f;
   const bounds = ([px, py], W, H) => px - W / 2 > -m + .05 && px + W / 2 < w + m - .05 && py - H / 2 > -fs * .3 && py + H / 2 < d + fs * 1.9;
   /* 把標籤放到道具旁邊：找一個不壓到別的標籤、也不壓到任何道具的位置 */
@@ -111,7 +114,7 @@ function build(D, ev, sc, mode) {
     return { q, W, H };
   }
   const drawOut = (k, q, W, H) => {
-    const i = items[k];
+    const i = items[k]; TC = i.tc;
     lines.push(`<line x1="${i.pl.x}" y1="${i.pl.y}" x2="${q[0]}" y2="${q[1]}" stroke="#374151" stroke-width="${fs * .1}"/><circle cx="${i.pl.x}" cy="${i.pl.y}" r="${fs * .22}" fill="#374151"/>`);
     labels.push(`<rect x="${q[0] - W / 2}" y="${q[1] - H / 2}" width="${W}" height="${H}" rx="${fs * .2}" fill="#fff" fill-opacity=".95" stroke="${i.c}" stroke-width="${fs * .1}"/>` + textEl(i.p.name, q[0], q[1], fs));
   };
@@ -158,7 +161,7 @@ function build(D, ev, sc, mode) {
 
   const outPlaced = [];
   for (const k of order) {
-    const i = items[k], { x, y } = i.pl, b = boxes[k], name = i.p.name, num = nums.get(i.p.id);
+    const i = items[k], { x, y } = i.pl, b = boxes[k], name = i.p.name, num = nums.get(i.p.id); TC = i.tc;
     if (mode === 'mix') {
       const p = plan[k];
       if (p.t === 'in') { const ch = [...name], ls = Array.from({ length: p.rows }, (_, r) => ch.slice(r * p.per, (r + 1) * p.per).join('')).filter(Boolean); labels.push(ls.map((l, r) => textEl(l, x, y + (r - (ls.length - 1) / 2) * p.f * 1.15, p.f)).join('')); }
@@ -220,6 +223,7 @@ $('src').onchange = e => { st.src = e.target.value; D = st.src === 'live' && liv
 $('ev').onchange = e => { st.ev = e.target.value; st.sc = null; fill(); };
 $('sc').onchange = e => { st.sc = e.target.value; draw(); };
 $('views').onclick = e => { const b = e.target.closest('[data-v]'); if (b) { view = b.dataset.v; fill(); } };
+$('ctext').onchange = e => { colorText = e.target.checked; draw(); };
 $('print').onclick = () => window.print();
 function setStatus(msg) {
   $('status').innerHTML = msg || (st.src === 'live' ? '目前顯示的是班級的<b>即時資料</b>（唯讀，這一頁不會修改它）。' : '目前顯示的是<b>範例資料</b>，用來比較各種標籤方式。');

@@ -81,7 +81,7 @@ const fmtEv = e => `${e.date || '未定日期'}｜${e.name}｜${stageOf(e.stageI
 /* ---------- stage SVG（單位：公尺） ---------- */
 /* 配色：預設「黑白友善」——三類在灰階下深淺差很大；個人提供再加虛線邊框＋斜線底紋，演員本來就是圓形 */
 const PAL = {
-  bw: { theatre: { c: '#1e3a8a', t: '#0b1b4d', fo: .3 }, personal: { c: '#c2410c', t: '#9a3412', fo: .1, dash: true, hatch: true }, actor: { c: '#16a34a', t: '#14532d', fo: .25 } },
+  bw: { theatre: { c: '#3b82f6', t: '#1e40af', fo: .25 }, personal: { c: '#c2410c', t: '#9a3412', fo: .1, dash: true, hatch: true }, actor: { c: '#16a34a', t: '#14532d', fo: .25 } },
   color: { theatre: { c: '#3b82f6', t: '#1d4ed8' }, personal: { c: '#f59e0b', t: '#b45309' }, actor: { c: '#10b981', t: '#047857' } },
 };
 const PAL_KEY = 'stage-props-pal';

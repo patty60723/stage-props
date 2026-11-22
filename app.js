@@ -721,7 +721,7 @@ async function boot() {
   lsSet(CODE_KEY, code); cloud.code = code; renderHeader();
   window.addEventListener('online', renderHeader); window.addEventListener('offline', renderHeader);
   try {
-    const [api, diff] = await Promise.all([import('./sync.js'), import('./diff.js')]);
+    const [api, diff] = await Promise.all([import('./sync.js?v=202611221446'), import('./diff.js?v=202611221446')]);
     cloud.diff = diff; cloud.api = api.connect(CFG, code, { onData, onError });
     setTimeout(() => { cloud.giveUp = true; if (cloud.ok) { render(); return; } if (!cloud.err) { cloud.err = '連線逾時：請確認 Firebase 已建立 Firestore Database（位置選 asia-east1）、規則已發布，且網路沒有擋 firestore.googleapis.com'; render(); } }, 12000);
   } catch (e) { onError(e); }

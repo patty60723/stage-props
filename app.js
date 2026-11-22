@@ -36,7 +36,7 @@ S.scenes = S.scenes || [];
 const LAST_KEY = 'stage-props-last';
 const cloud = { server: {}, giveUp: false, api: null, diff: null, code: null, ok: false, got: {}, stash: {}, fromCache: true, err: null, remote: { stages: [], props: [], events: [], scenes: [] } };
 const snap = s => JSON.parse(JSON.stringify({ stages: s.stages, props: s.props, events: s.events, scenes: s.scenes }));
-const ui = { tab: 'editor', sel: null, q: '', src: 'all', editProp: null, editStage: null, listOpen: false, zoom: 1, nudge: 0.05, full: false, view: 'home', outScene: '__all', sceneId: null, group: false };
+const ui = { tab: 'editor', sel: null, q: '', src: 'all', editProp: null, editStage: null, pal: (lsGet('stage-props-pal') === 'color' ? 'color' : 'bw'), listOpen: false, zoom: 1, nudge: 0.05, full: false, view: 'home', outScene: '__all', sceneId: null, group: false };
 
 /* 存檔：單機模式寫 localStorage；雲端模式把「和上次同步狀態的差異」送到 Firestore。回傳送出的寫入數 */
 function save() {
@@ -79,10 +79,79 @@ function migrateLegacy() {
 const fmtEv = e => `${e.date || '未定日期'}｜${e.name}｜${stageOf(e.stageId)?.name || '?'}`;
 
 /* ---------- stage SVG（單位：公尺） ---------- */
-function stageSVG(ev, sc, opt = {}) {
-  const st = stageOf(ev.stageId); if (!st) return '';
-  const { w, d } = st, m = 0.6;
-  const fs = Math.max(w, d) * 0.025;
+/* 配色：預設「黑白友善」——三類在灰階下深淺差很大；個人提供再加虛線邊框＋斜線底紋，演員本來就是圓形 */
+const PAL = {
+  bw: { theatre: { c: '#1e3a8a', t: '#0b1b4d', fo: .3 }, personal: { c: '#c2410c', t: '#9a3412', fo: .1, dash: true, hatch: true }, actor: { c: '#16a34a', t: '#14532d', fo: .25 } },
+  color: { theatre: { c: '#3b82f6', t: '#1d4ed8' }, personal: { c: '#f59e0b', t: '#b45309' }, actor: { c: '#10b981', t: '#047857' } },
+};
+const PAL_KEY = 'stage-props-pal';
+const pal = src => PAL[ui.pal === 'color' ? 'color' : 'bw'][src];
+const STAGE_M = 0.9;                                          // 舞台左右留白（外移的標籤會用到）
+const aabb = (x, y, w, d, rot) => { const r = rot * Math.PI / 180, c = Math.abs(Math.cos(r)), s = Math.abs(Math.sin(r)); return { x, y, w: w * c + d * s, h: w * s + d * c }; };
+const hitBox = (a, b) => Math.abs(a.x - b.x) < (a.w + b.w) / 2 && Math.abs(a.y - b.y) < (a.h + b.h) / 2;
+const halo = fs => `paint-order="stroke" stroke="#fff" stroke-width="${fs * .28}" stroke-linejoin="round"`;
+function inShape(px, py, it) {                                // 點是否落在道具的實際形狀內（含旋轉；演員為橢圓）
+  const r = -(it.pl.rot || 0) * Math.PI / 180, dx = px - it.pl.x, dy = py - it.pl.y, lx = dx * Math.cos(r) - dy * Math.sin(r), ly = dx * Math.sin(r) + dy * Math.cos(r);
+  return it.p.source === 'actor' ? (lx / (it.sz.w / 2)) ** 2 + (ly / (it.sz.d / 2)) ** 2 <= 1 : Math.abs(lx) <= it.sz.w / 2 && Math.abs(ly) <= it.sz.d / 2;
+}
+const rectInside = (it, bw, bh) => [[-1, -1], [1, -1], [-1, 1], [1, 1]].every(([sx, sy]) => inShape(it.pl.x + sx * bw / 2, it.pl.y + sy * bh / 2, it));
+function boxHitsShape(box, it) {                              // 文字框是否壓到某個道具
+  for (let a = 0; a <= 6; a++) for (let b = 0; b <= 2; b++) if (inShape(box.x - box.w / 2 + box.w * a / 6, box.y - box.h / 2 + box.h * b / 2, it)) return true;
+  const r = (it.pl.rot || 0) * Math.PI / 180, pts = [[0, 0], [-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sy]) => { const lx = sx * it.sz.w / 2, ly = sy * it.sz.d / 2; return [it.pl.x + lx * Math.cos(r) - ly * Math.sin(r), it.pl.y + lx * Math.sin(r) + ly * Math.cos(r)]; });
+  return pts.some(([qx, qy]) => Math.abs(qx - box.x) <= box.w / 2 && Math.abs(qy - box.y) <= box.h / 2);
+}
+let hatchN = 0;
+/* 回傳 { svg, nums }：nums = 以編號標示的小道具 [{n, p, count}]（單獨、字放不下的才會編號） */
+function stageParts(ev, sc, opt = {}) {
+  const st = stageOf(ev.stageId); if (!st) return { svg: '', nums: [] };
+  const { w, d } = st, m = STAGE_M, fs = Math.max(w, d) * 0.025, selId = opt.interactive ? ui.sel : null;
+  const items = (sc?.placements || []).map(pl => ({ pl, p: propOf(pl.propId) })).filter(x => x.p).map(x => ({ ...x, sz: propSize(x.p), ...(({ c, t, fo, dash, hatch }) => ({ c, tc: t, fo, dash, hatch }))(pal(x.p.source)) }));
+  const boxes = items.map(i => aabb(i.pl.x, i.pl.y, i.sz.w, i.sz.d, i.pl.rot || 0));
+  const order = items.map((_, k) => k).sort((a, b) => items[b].sz.w * items[b].sz.d - items[a].sz.w * items[a].sz.d || a - b);   // 大的先畫，小的疊在上面
+  const rank = []; order.forEach((k, r) => rank[k] = r);
+  let TC = '#111827'; const lines = [], labels = [];
+  const textEl = (t, cx, cy, f) => `<text x="${cx}" y="${cy + f * .35}" font-size="${f}" font-weight="600" text-anchor="middle" fill="${TC}" ${halo(f)}>${esc(t)}</text>`;
+  const lw = (t, f) => [...t].length * f;
+  const inBounds = ([px, py], W, H) => px - W / 2 > -m + .05 && px + W / 2 < w + m - .05 && py - H / 2 > -fs * .3 && py + H / 2 < d + fs * 1.9;
+  function placeOutside(k, name, placed) {                    // 把標籤放到旁邊：不壓到別的標籤，也不壓到任何道具
+    const b = boxes[k], x = items[k].pl.x, y = items[k].pl.y, H = fs * 1.35, W = lw(name, fs) + fs * .7, hw = b.w / 2, hh = b.h / 2, gap = fs * .5, c = [];
+    for (const kk of [1, 2, 3.4]) c.push([x + hw + gap * kk + W / 2, y], [x - hw - gap * kk - W / 2, y], [x, y - hh - gap * kk - H / 2], [x, y + hh + gap * kk + H / 2],
+      [x + hw + gap * kk + W / 2, y - hh - H * kk], [x - hw - gap * kk - W / 2, y - hh - H * kk], [x + hw + gap * kk + W / 2, y + hh + H * kk], [x - hw - gap * kk - W / 2, y + hh + H * kk]);
+    const bx = q => ({ x: q[0], y: q[1], w: W, h: H });
+    const q = c.find(q => inBounds(q, W, H) && !placed.some(o => hitBox(bx(q), o)) && !boxes.some(o => hitBox(bx(q), o)))
+      || c.find(q => inBounds(q, W, H) && !placed.some(o => hitBox(bx(q), o))) || c.find(q => inBounds(q, W, H)) || c[0];
+    return { q, W, H };
+  }
+  const drawOut = (k, q, W, H) => {
+    const i = items[k]; TC = i.tc;
+    lines.push(`<line x1="${i.pl.x}" y1="${i.pl.y}" x2="${q[0]}" y2="${q[1]}" stroke="#374151" stroke-width="${fs * .1}"/><circle cx="${i.pl.x}" cy="${i.pl.y}" r="${fs * .22}" fill="#374151"/>`);
+    labels.push(`<rect x="${q[0] - W / 2}" y="${q[1] - H / 2}" width="${W}" height="${H}" rx="${fs * .2}" fill="#fff" fill-opacity=".95" stroke="${i.c}" stroke-width="${fs * .1}"/>` + textEl(i.p.name, q[0], q[1], fs));
+  };
+  /* 先決定每個道具的標籤：寫在裡面／編號（單獨的小道具）／移到旁邊加細線（擠在一起或會被蓋住） */
+  const MIN = fs * .7, plan = [], placed = [];
+  for (const k of order) {
+    const i = items[k], ch = [...i.p.name], n = ch.length, cand = [];
+    for (const rows of [1, 2, 3]) { const per = Math.ceil(n / rows); for (let f = fs; f >= MIN - 1e-9; f *= .92) cand.push({ rows, per, f }); }
+    cand.sort((a, b) => b.f - a.f || a.rows - b.rows);
+    let pick = null;
+    for (const c of cand) {
+      const bw = c.per * c.f + c.f * .3, bh = c.rows * c.f * 1.15, box = { x: i.pl.x, y: i.pl.y, w: bw, h: bh };
+      if (!rectInside(i, bw, bh)) continue;
+      if (placed.some(o => hitBox(box, o))) continue;
+      if (items.some((o, j) => j !== k && rank[j] > rank[k] && boxHitsShape(box, o))) continue;
+      pick = { ...c, box }; break;
+    }
+    if (pick) { plan[k] = { t: 'in', ...pick }; placed.push(pick.box); continue; }
+    const grown = { x: boxes[k].x, y: boxes[k].y, w: boxes[k].w + fs, h: boxes[k].h + fs };
+    if (!boxes.some((o, j) => j !== k && hitBox(grown, o))) { const f = Math.min(fs * 1.1, Math.min(boxes[k].w, boxes[k].h) * .8); plan[k] = { t: 'num', f }; placed.push({ x: i.pl.x, y: i.pl.y, w: f * 1.3, h: f * 1.3 }); }
+    else plan[k] = { t: 'out' };
+  }
+  for (const k of order) if (plan[k].t === 'out') { const { q, W, H } = placeOutside(k, items[k].p.name, placed); Object.assign(plan[k], { q, W, H }); placed.push({ x: q[0], y: q[1], w: W, h: H }); }
+  const numItems = items.filter((_, k) => plan[k].t === 'num'), nums = new Map();
+  [...new Map(numItems.map(i => [i.p.id, i.p])).values()].sort((a, b) => ORDER[a.source] - ORDER[b.source] || a.name.localeCompare(b.name, 'zh-Hant')).forEach((p, n) => nums.set(p.id, n + 1));
+  const numList = [...nums.entries()].map(([id, n]) => ({ n, p: propOf(id), count: numItems.filter(i => i.p.id === id).length }));
+
+  const hid = 'h' + (++hatchN);
   let g = '';
   for (let i = 1; i < w; i++) g += `<line x1="${i}" y1="0" x2="${i}" y2="${d}" stroke="#e5e7eb" stroke-width="${fs * 0.08}"/>`;
   for (let j = 1; j < d; j++) g += `<line x1="0" y1="${j}" x2="${w}" y2="${j}" stroke="#e5e7eb" stroke-width="${fs * 0.08}"/>`;
@@ -90,30 +159,39 @@ function stageSVG(ev, sc, opt = {}) {
   g += `<rect x="0" y="0" width="${w}" height="${d}" fill="none" stroke="#374151" stroke-width="${fs * 0.2}"/>`;
   g += `<text x="0" y="${-fs * 2.1}" font-size="${fs * 1.1}" font-weight="600" fill="#111827">${esc(ev.name)}　${esc(ev.date || '')}</text>`;
   g += `<text x="0" y="${-fs * 0.8}" font-size="${fs * 1.1}" font-weight="600" fill="#7c3aed">${esc(sc ? sceneLabel(sc) : '')}</text>`;
-  g += `<text x="${w}" y="${-fs * 0.8}" font-size="${fs}" fill="#6b7280" text-anchor="end">${esc(st.name)} ${w}×${d} m（後台）</text>`;
+  g += `<text x="${w}" y="${-fs * 0.8}" font-size="${fs}" fill="#6b7280" text-anchor="end">${esc(stageOf(ev.stageId).name)} ${w}×${d} m（後台）</text>`;
   g += `<text x="${w / 2}" y="${d + fs * 2.4}" font-size="${fs * 1.1}" fill="#6b7280" text-anchor="middle">▼ 觀眾席</text>`;
-  for (const pl of sc?.placements || []) {
-    const p = propOf(pl.propId); if (!p) continue;
-    const c = SRC[p.source].color;
-    const sel = opt.interactive && ui.sel === pl.id;
-    const sz = propSize(p);
-    const shape = p.source === 'actor'
-      ? `<ellipse rx="${sz.w / 2}" ry="${sz.d / 2}" fill="${c}" fill-opacity=".3" stroke="${c}" stroke-width="${fs * (sel ? .3 : .15)}"${sel ? ` stroke-dasharray="${fs * .4} ${fs * .3}"` : ''}/>`
-      : `<rect x="${-sz.w / 2}" y="${-sz.d / 2}" width="${sz.w}" height="${sz.d}" rx="${fs * .15}" fill="${c}" fill-opacity=".25" stroke="${c}" stroke-width="${fs * (sel ? .3 : .15)}"${sel ? ` stroke-dasharray="${fs * .4} ${fs * .3}"` : ''}/>`;
+  const draw = [...order.filter(k => items[k].pl.id !== selId), ...order.filter(k => items[k].pl.id === selId)];   // 選取的畫在最上面，旋轉把手才點得到
+  for (const k of draw) {
+    const i = items[k], { pl } = i, act = i.p.source === 'actor', sel = pl.id === selId, fo = i.fo ?? (act ? .3 : .25);
+    const geo = act ? `<ellipse rx="${i.sz.w / 2}" ry="${i.sz.d / 2}"` : `<rect x="${-i.sz.w / 2}" y="${-i.sz.d / 2}" width="${i.sz.w}" height="${i.sz.d}" rx="${fs * .15}"`;
+    const stroke = sel ? '#7c3aed' : i.c, sw = fs * (sel ? .3 : .15), dash = sel ? ` stroke-dasharray="${fs * .4} ${fs * .3}"` : (i.dash ? ` stroke-dasharray="${fs * .55} ${fs * .3}"` : '');
     let handle = '';
-    if (sel) { const rr = (w + 2 * m) * 0.03, ty = -sz.d / 2 - rr * 2.2;   // 旋轉把手：拖曳即可轉
-      handle = `<line x1="0" y1="${-sz.d / 2}" x2="0" y2="${ty}" stroke="#7c3aed" stroke-width="${fs * .12}"/><circle class="rot" cx="0" cy="${ty}" r="${rr * 1.8}" fill="transparent"/><circle cx="0" cy="${ty}" r="${rr}" fill="#7c3aed" stroke="#fff" stroke-width="${fs * .1}" pointer-events="none"/>`; }
-    const maxc = Math.max(2, Math.floor(Math.max(sz.w, sz.d) / fs)) ;
-    const nm = p.name.length > maxc ? p.name.slice(0, maxc - 1) + '…' : p.name;
-    const ow = p.source !== 'theatre' && p.owner && p.owner !== p.name ? p.owner : '';
-    const ot = ow ? (ow.length > maxc ? ow.slice(0, maxc - 1) + '…' : ow) : '';
-    const text = `<g transform="translate(${pl.x} ${pl.y})" pointer-events="none"><text text-anchor="middle" font-size="${fs}" fill="#111827" y="${ot ? -fs * .1 : fs * .35}">${esc(nm)}</text>${ot ? `<text text-anchor="middle" font-size="${fs * .8}" fill="#4b5563" y="${fs * .95}">${esc(ot)}</text>` : ''}</g>`;
-    g += `<g><g class="g" data-pid="${pl.id}" transform="translate(${pl.x} ${pl.y}) rotate(${pl.rot || 0})"><title>${esc(p.name)}</title>${shape}${handle}</g>${text}</g>`;
+    if (sel) { const rr = (w + 2 * m) * 0.03, ty = -i.sz.d / 2 - rr * 2.2;   // 旋轉把手：拖曳即可轉
+      handle = `<line x1="0" y1="${-i.sz.d / 2}" x2="0" y2="${ty}" stroke="#7c3aed" stroke-width="${fs * .12}"/><circle class="rot" cx="0" cy="${ty}" r="${rr * 1.8}" fill="transparent"/><circle cx="0" cy="${ty}" r="${rr}" fill="#7c3aed" stroke="#fff" stroke-width="${fs * .1}" pointer-events="none"/>`; }
+    g += `<g class="g" data-pid="${pl.id}" transform="translate(${pl.x} ${pl.y}) rotate(${pl.rot || 0})"><title>${esc(i.p.name)}</title>${geo} fill="${i.c}" fill-opacity="${fo}" stroke="${stroke}" stroke-width="${sw}"${dash}/>${i.hatch ? `${geo} fill="url(#${hid})" stroke="none" pointer-events="none"/>` : ''}${handle}</g>`;
   }
-  const vb = [-m, -fs * 3.4, w + 2 * m, d + fs * 7.4];
+  for (const k of order) {
+    const i = items[k], { x, y } = i.pl, p = plan[k]; TC = i.tc;
+    if (p.t === 'in') { const ch = [...i.p.name], ls = Array.from({ length: p.rows }, (_, r) => ch.slice(r * p.per, (r + 1) * p.per).join('')).filter(Boolean); labels.push(ls.map((l, r) => textEl(l, x, y + (r - (ls.length - 1) / 2) * p.f * 1.15, p.f)).join('')); }
+    else if (p.t === 'num') labels.push(textEl(String(nums.get(i.p.id)), x, y, p.f));
+    else drawOut(k, p.q, p.W, p.H);
+  }
+  g += `<g class="lbls" pointer-events="none">${lines.join('')}${labels.join('')}</g>`;
+  let extra = 0;
+  if (opt.legend && numList.length) {                          // 匯出 PNG 時，把編號對照表也畫進圖裡
+    const y0 = d + fs * 4.4; extra = numList.length * fs * 1.7 + fs;
+    g += numList.map(({ n, p, count }, r) => { const yy = y0 + r * fs * 1.7, c = pal(p.source);
+      return `<circle cx="${fs * .7}" cy="${yy}" r="${fs * .65}" fill="${c.c}"/><text x="${fs * .7}" y="${yy + fs * .35}" font-size="${fs * .9}" font-weight="600" text-anchor="middle" fill="#fff">${n}</text><text x="${fs * 1.7}" y="${yy + fs * .35}" font-size="${fs}" fill="#111827">${esc(p.name)}（${esc(p.source === 'theatre' ? '劇場' : p.owner || SRC[p.source].label)}）${count > 1 ? '×' + count : ''}</text>`; }).join('');
+  }
+  const vb = [-m, -fs * 3.4, w + 2 * m, d + fs * 7.4 + extra];
   const size = opt.px ? ` width="${opt.px}" height="${Math.round(opt.px * vb[3] / vb[2])}"` : '';
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb.join(' ')}"${size} font-family="${FONT}"><rect x="${vb[0]}" y="${vb[1]}" width="${vb[2]}" height="${vb[3]}" fill="#fff"/>${g}</svg>`;
+  const defs = items.some(i => i.hatch) ? `<defs><pattern id="${hid}" patternUnits="userSpaceOnUse" width="${fs * .45}" height="${fs * .45}" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="${fs * .45}" stroke="${pal('personal').c}" stroke-width="${fs * .09}"/></pattern></defs>` : '';
+  return { svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb.join(' ')}"${size} font-family="${FONT}">${defs}<rect x="${vb[0]}" y="${vb[1]}" width="${vb[2]}" height="${vb[3]}" fill="#fff"/>${g}</svg>`, nums: numList, numMap: nums };
 }
+const stageSVG = (ev, sc, opt) => stageParts(ev, sc, opt).svg;
+const numLegendHTML = nums => nums.length ? `<div class="muted" style="margin-top:6px">圖中以編號標示的小道具：</div><table class="numtbl"><tr><th>編號</th><th>道具</th><th>類別</th><th>提供者</th><th>數量</th></tr>${nums.map(({ n, p, count }) => `<tr><td>${numBadge(n, p)}</td><td>${esc(p.name)}</td><td>${SRC[p.source].label}</td><td>${esc(p.source === 'theatre' ? '劇場' : p.owner)}</td><td>${count}</td></tr>`).join('')}</table>` : '';
+const numBadge = (n, p) => `<span class="num" style="background:${pal(p.source).c}">${n}</span>`;
 
 /* ---------- 版面 ---------- */
 function renderHeader() {
@@ -197,8 +275,9 @@ function renderEditor() {
     <details class="card" id="placList"${ui.listOpen ? ' open' : ''}><summary id="placSum"></summary><div id="placBody"></div></details>
   </div>
   <div class="card stagewrap${ui.full ? ' full' : ''}">
-    <div class="zoombar no-print"><button class="small" data-act="z-out" title="縮小">－</button><span id="zlabel">${Math.round(ui.zoom * 100)}%</span><button class="small" data-act="z-in" title="放大">＋</button><button class="small" data-act="z-fit">適合畫面</button><button class="small" data-act="z-full">${ui.full ? '✕ 離開全螢幕' : '⛶ 全螢幕'}</button></div>
+    <div class="zoombar no-print"><button class="small" data-act="z-out" title="縮小">－</button><span id="zlabel">${Math.round(ui.zoom * 100)}%</span><button class="small" data-act="z-in" title="放大">＋</button><button class="small" data-act="z-fit">適合畫面</button><label class="palsel">配色<select data-pal><option value="bw"${ui.pal === 'bw' ? ' selected' : ''}>黑白友善</option><option value="color"${ui.pal === 'color' ? ' selected' : ''}>彩色</option></select></label><button class="small" data-act="z-full">${ui.full ? '✕ 離開全螢幕' : '⛶ 全螢幕'}</button></div>
     <div id="stageBox" style="--z:${ui.zoom}"></div>
+    <div id="numLegend"></div>
     <div class="selTools no-print"><button class="small" data-act="pl-rot" data-d="-15">↺ 15°</button><button class="small" data-act="pl-rot" data-d="15">↻ 15°</button><button class="small" data-act="pl-rot" data-d="90">↻ 90°</button><button class="small" data-act="pl-dup">複製</button><button class="small danger" data-act="pl-del">移除</button>${nudgeHTML()}</div>
     <div class="legend">${Object.entries(SRC).map(([k, v]) => `<span><span class="dot ${k}"></span>${v.label}</span>`).join('')}<span class="muted">拖曳移動；拖紫色圓點旋轉；雙指或 Ctrl+滾輪縮放，拖空白處平移；方向鍵微調、R 旋轉、Delete 刪除</span></div>
   </div></div>`;
@@ -210,9 +289,14 @@ function renderPropList() {
   const list = S.props.filter(p => (ui.src === 'all' || p.source === ui.src) && (!q || (p.name + p.owner).toLowerCase().includes(q)));
   document.getElementById('plist').innerHTML = list.length ? list.map(p => `<div class="prow"><span class="dot ${p.source}"></span><div class="nm"><b>${esc(p.name)}</b><span class="muted">${esc(ownerKey(p))}${p.source === 'actor' ? '' : '・' + p.w + '×' + p.d + 'm'}</span></div><button class="small" data-act="add-pl" data-id="${p.id}">＋</button></div>`).join('') : '<div class="muted">沒有符合的道具</div>';
 }
+function paintStage() {
+  const ev = curEvent(), box = document.getElementById('stageBox'); if (!ev || !box) return;
+  const parts = stageParts(ev, curScene(), { interactive: true }); box.innerHTML = parts.svg;
+  const l = document.getElementById('numLegend'); if (l) l.innerHTML = numLegendHTML(parts.nums);
+}
 function renderStageBox() {
   const ev = curEvent(), box = document.getElementById('stageBox'); if (!ev || !box) return;
-  box.innerHTML = stageSVG(ev, curScene(), { interactive: true });
+  paintStage();
   renderSelPanel();
 }
 /* ---- 場景中的道具清單：可選取、刪除；超出舞台的可移回 ---- */
@@ -257,10 +341,10 @@ const snapStep = () => ui.zoom >= 4 ? 0.01 : ui.zoom >= 2 ? 0.02 : 0.05;
 const nudgeHTML = () => `<div class="nudge no-print"><button class="small" data-act="nudge" data-dx="-1" data-dy="0">←</button><button class="small" data-act="nudge" data-dx="0" data-dy="-1">↑</button><button class="small" data-act="nudge" data-dx="0" data-dy="1">↓</button><button class="small" data-act="nudge" data-dx="1" data-dy="0">→</button><select data-nudge title="每次移動多少">${[[0.01, '1 公分'], [0.05, '5 公分'], [0.25, '25 公分']].map(([v, l]) => `<option value="${v}"${ui.nudge === v ? ' selected' : ''}>${l}</option>`).join('')}</select><button class="small" data-act="z-sel">🔍 放大到選取</button></div>`;
 function focusSel() {                                         // 放大到選取的物件並置中
   const sc = curScene(), pl = sc?.placements.find(x => x.id === ui.sel), box = document.getElementById('stageBox'), st = stageOf(curEvent().stageId); if (!pl || !box) return;
-  const p = propSize(propOf(pl.propId)), W = st.w + 1.2, fs = Math.max(st.w, st.d) * 0.025;
+  const p = propSize(propOf(pl.propId)), W = st.w + 2 * STAGE_M, fs = Math.max(st.w, st.d) * 0.025;
   setZoom(Math.min(10, Math.max(1, W / Math.max(2, Math.max(p.w, p.d) * 6))));
   const ppu = box.querySelector('svg').getBoundingClientRect().width / W;
-  box.scrollLeft = (pl.x + 0.6) * ppu - box.clientWidth / 2; box.scrollTop = (pl.y + fs * 3.4) * ppu - box.clientHeight / 2;
+  box.scrollLeft = (pl.x + STAGE_M) * ppu - box.clientWidth / 2; box.scrollTop = (pl.y + fs * 3.4) * ppu - box.clientHeight / 2;
 }
 /* ---- 縮放 / 平移 ---- */
 function setZoom(z, cx, cy) {
@@ -312,6 +396,7 @@ document.addEventListener('pointerdown', e => {
 document.addEventListener('pointermove', e => {
   if (!drag) return;
   const pt = svgPoint(drag.svg, e); drag.moved = true;
+  if (!drag.hid) { drag.hid = true; drag.svg.querySelector('.lbls')?.setAttribute('display', 'none'); }   // 拖曳中先隱藏標籤，放開後重畫
   if (drag.rot) {
     let a = Math.round(Math.atan2(pt.x - drag.pl.x, -(pt.y - drag.pl.y)) * 180 / Math.PI / 5) * 5; a = ((a % 360) + 360) % 360;
     drag.pl.rot = a; drag.g.setAttribute('transform', `translate(${drag.pl.x} ${drag.pl.y}) rotate(${a})`); return;
@@ -382,8 +467,8 @@ function rowsFor(scs) {
   }
   return [...map.values()].sort((a, b) => ORDER[a.p.source] - ORDER[b.p.source] || ownerKey(a.p).localeCompare(ownerKey(b.p), 'zh-Hant') || a.p.name.localeCompare(b.p.name, 'zh-Hant'));
 }
-const tableHTML = (rows, users) => rows.length ? `<table><tr><th>道具</th><th>類別</th><th>提供者</th><th>尺寸 (m)</th><th>數量</th>${users ? '<th>使用場景</th>' : ''}</tr>${rows.map(({ p, n, users: u }) => `<tr><td>${esc(p.name)}</td><td>${SRC[p.source].label}</td><td>${esc(ownerKey(p))}</td><td>${sizeText(p)}</td><td>${n}</td>${users ? `<td>${esc([...u].join('、'))}</td>` : ''}</tr>`).join('')}</table>` : '<div class="muted">（沒有道具）</div>';
-const scenePage = (ev, sc, brk) => `<div class="pg ${brk ? 'pg-break' : ''}"><h2>${esc(sceneLabel(sc))} 的道具</h2>${tableHTML(rowsFor([sc]))}<div>${stageSVG(ev, sc)}</div></div>`;
+const tableHTML = (rows, users, nm) => rows.length ? `<table><tr>${nm ? '<th>編號</th>' : ''}<th>道具</th><th>類別</th><th>提供者</th><th>尺寸 (m)</th><th>數量</th>${users ? '<th>使用場景</th>' : ''}</tr>${rows.map(({ p, n, users: u }) => `<tr>${nm ? `<td>${nm.has(p.id) ? numBadge(nm.get(p.id), p) : '—'}</td>` : ''}<td>${esc(p.name)}</td><td>${SRC[p.source].label}</td><td>${esc(ownerKey(p))}</td><td>${sizeText(p)}</td><td>${n}</td>${users ? `<td>${esc([...u].join('、'))}</td>` : ''}</tr>`).join('')}</table>` : '<div class="muted">（沒有道具）</div>';
+const scenePage = (ev, sc, brk) => { const parts = stageParts(ev, sc); return `<div class="pg ${brk ? 'pg-break' : ''}"><h2>${esc(sceneLabel(sc))} 的道具</h2>${tableHTML(rowsFor([sc]), false, parts.numMap)}<div>${parts.svg}</div></div>`; };
 function renderOutput() {
   const ev = curEvent();
   if (!ev) return '<div class="card empty">請先建立事件。</div>';
@@ -394,10 +479,11 @@ function renderOutput() {
   if (!scs.length) body = '<div class="muted">這個事件還沒有場景。</div>';
   else if (!all) body = scenePage(ev, one, false);
   else body = `<div class="pg"><h2>全班道具總清單</h2>${tableHTML(rowsFor(scs), true)}</div>` +
-    scs.map(x => ui.group ? scenePage(ev, x, true) : `<div class="pg"><h2>${esc(sceneLabel(x))}・舞台俯視圖</h2>${stageSVG(ev, x)}</div>`).join('');
+    scs.map(x => ui.group ? scenePage(ev, x, true) : (() => { const pt = stageParts(ev, x); return `<div class="pg"><h2>${esc(sceneLabel(x))}・舞台俯視圖</h2>${pt.svg}${numLegendHTML(pt.nums)}</div>`; })()).join('');
   return `<div class="card no-print"><div class="toolbar">
     <label>顯示：<select id="sceneSel"><option value="__all">全班（總清單）</option>${scs.map(x => `<option value="${x.id}"${x.id === ui.outScene ? ' selected' : ''}>${esc(sceneLabel(x))}</option>`).join('')}</select></label>
     ${all ? `<label><input type="checkbox" id="groupChk"${ui.group ? ' checked' : ''}> 每人一頁（各自清單＋俯視圖）</label>` : ''}
+    <label>配色<select data-pal><option value="bw"${ui.pal === 'bw' ? ' selected' : ''}>黑白友善</option><option value="color"${ui.pal === 'color' ? ' selected' : ''}>彩色</option></select></label>
     <button class="primary" data-act="print">列印 / 存成 PDF</button>
     <button data-act="png">下載俯視圖 PNG${all ? '（每人一張）' : ''}</button>
     <button data-act="csv">下載清單 CSV</button></div></div>
@@ -419,7 +505,7 @@ function svgToPNG(svg, name) {
 }
 async function exportPNG() {
   const ev = curEvent();
-  for (const x of outScenes(ev)) await svgToPNG(stageSVG(ev, x, { px: 1800 }), `${fileBase(ev)}_${x.owner || '場景'}.png`);
+  for (const x of outScenes(ev)) await svgToPNG(stageSVG(ev, x, { px: 1800, legend: true }), `${fileBase(ev)}_${x.owner || '場景'}.png`);
 }
 function exportCSV() {
   const ev = curEvent(), q = v => `"${String(v).replace(/"/g, '""')}"`;
@@ -547,12 +633,13 @@ document.addEventListener('input', e => {
   if (t.dataset.pl) {
     const pl = curScene()?.placements.find(x => x.id === ui.sel); if (!pl) return;
     pl[t.dataset.pl] = parseFloat(t.value) || 0; if (t.dataset.pl !== 'rot') clampPl(pl);
-    save(); document.getElementById('stageBox').innerHTML = stageSVG(curEvent(), curScene(), { interactive: true });
+    save(); paintStage();
   }
 });
 document.addEventListener('change', e => {
   const t = e.target;
   if (t.name === 'source' && t.form?.dataset.form === 'prop') t.form.querySelectorAll('.sizef').forEach(el => el.hidden = t.value === 'actor');
+  if (t.dataset.pal !== undefined) { ui.pal = t.value; lsSet(PAL_KEY, t.value); render(); return; }
   if (t.dataset.nudge !== undefined) ui.nudge = parseFloat(t.value);
   if (t.id === 'sceneSel') { ui.outScene = t.value; render(); }
   if (t.id === 'groupChk') { ui.group = t.checked; render(); }
@@ -608,7 +695,7 @@ function refreshRemote() {
     const box = document.getElementById('stageBox');
     if (!curEvent() || !curScene() || !box) { if (!inForm) render(); return; }
     const chips = document.getElementById('sceneChips'); if (chips) chips.innerHTML = sceneChipsHTML();
-    box.innerHTML = stageSVG(curEvent(), curScene(), { interactive: true }); renderPropList();
+    paintStage(); renderPropList();
     if (!act?.closest?.('#selPanel')) renderSelPanel();
   } else if (!inForm) render();
 }

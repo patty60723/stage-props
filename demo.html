@@ -27,6 +27,7 @@ table{border-collapse:collapse;width:100%;margin-top:8px}
 th,td{text-align:left;padding:3px 8px;border-bottom:1px solid var(--line);font-size:13px}
 .num{display:inline-block;min-width:22px;text-align:center;border-radius:99px;color:#fff;padding:0 6px;font-size:12px}
 .note{background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:6px 10px;font-size:13px;margin-bottom:12px}
+#out.bwsim svg,#out.bwsim .num{filter:grayscale(1)}
 @media print{body{background:#fff}.noprint{display:none!important}main{padding:0}.card{border:none;padding:0 0 12px}.pgb{break-before:page}}
 </style>
 </head>
@@ -39,7 +40,9 @@ th,td{text-align:left;padding:3px 8px;border-bottom:1px solid var(--line);font-s
   <label>事件<select id="ev"></select></label>
   <label>場景<select id="sc"></select></label>
   <div><div class="muted" style="margin-bottom:2px">檢視</div><div class="views" id="views"></div></div>
+  <label>配色<select id="pal"><option value="color">彩色</option><option value="bw">黑白友善</option></select></label>
   <label style="flex-direction:row;align-items:center;gap:6px;color:var(--ink)"><input type="checkbox" id="ctext" checked> 文字顏色依類別</label>
+  <label style="flex-direction:row;align-items:center;gap:6px;color:var(--ink)"><input type="checkbox" id="sim"> 模擬黑白列印</label>
   <button class="primary" id="print" style="margin-left:auto">列印目前檢視</button>
 </div>
 <div id="status" class="note noprint"></div>
@@ -49,6 +52,13 @@ th,td{text-align:left;padding:3px 8px;border-bottom:1px solid var(--line);font-s
 <script type="module">
 import { fromDocs } from './diff.js';
 const SRC = { theatre: { label: '劇場提供', color: '#3b82f6', text: '#1d4ed8' }, personal: { label: '個人提供', color: '#f59e0b', text: '#b45309' }, actor: { label: '演員', color: '#10b981', text: '#047857' } };
+/* 配色：彩色／黑白友善（三類在灰階下深淺差距大，個人提供另加虛線邊框＋斜線底紋，演員本來就是圓形） */
+const PAL = {
+  color: { theatre: { c: '#3b82f6', t: '#1d4ed8' }, personal: { c: '#f59e0b', t: '#b45309' }, actor: { c: '#10b981', t: '#047857' } },
+  bw: { theatre: { c: '#1e3a8a', t: '#0b1b4d', fo: .3 }, personal: { c: '#c2410c', t: '#9a3412', fo: .1, dash: true, hatch: true }, actor: { c: '#16a34a', t: '#14532d', fo: .25 } },
+};
+let palette = 'color', hcount = 0, simBW = false;
+const pal = src => PAL[palette][src];
 let colorText = true;   // 文字顏色依類別（劇場藍／個人橘／演員綠）
 const ORDER = { theatre: 0, personal: 1, actor: 2 };
 const FONT = "system-ui,'Noto Sans TC','Microsoft JhengHei',sans-serif";
@@ -96,7 +106,7 @@ function boxHitsShape(box, it) {                                // 文字框是�
 function build(D, ev, sc, mode) {
   const st = D.stages.find(s => s.id === ev.stageId), P = id => D.props.find(p => p.id === id);
   const { w, d } = st, m = 0.9, fs = Math.max(w, d) * 0.025;
-  const items = sc.placements.map(pl => ({ pl, p: P(pl.propId) })).filter(x => x.p).map(x => ({ ...x, sz: psize(x.p), c: SRC[x.p.source].color, tc: SRC[x.p.source].text }));
+  const items = sc.placements.map(pl => ({ pl, p: P(pl.propId) })).filter(x => x.p).map(x => ({ ...x, sz: psize(x.p), ...(({ c, t, fo, dash, hatch }) => ({ c, tc: t, fo, dash, hatch }))(pal(x.p.source)) }));
   const boxes = items.map(i => aabb(i.pl.x, i.pl.y, i.sz.w, i.sz.d, i.pl.rot || 0));
   const order = items.map((_, k) => k).sort((a, b) => items[b].sz.w * items[b].sz.d - items[a].sz.w * items[a].sz.d || a - b);   // 大的先畫，小的疊在上面
   const rank = []; order.forEach((k, r) => rank[k] = r);
@@ -152,10 +162,12 @@ function build(D, ev, sc, mode) {
   g += `<rect width="${w}" height="${d}" fill="none" stroke="#374151" stroke-width="${fs * .2}"/>`;
   g += `<text x="0" y="${-fs * .8}" font-size="${fs * 1.1}" font-weight="600" fill="#111827">${esc(ev.name)}　${esc(ev.date)}　<tspan fill="#7c3aed">${esc(sc.owner)}</tspan></text>`;
   g += `<text x="${w / 2}" y="${d + fs * 2.4}" font-size="${fs * 1.1}" fill="#6b7280" text-anchor="middle">▼ 觀眾席</text>`;
+  const hid = 'h' + (++hcount);
   const shapeOf = i => {
-    const sw = fs * .15, t = `translate(${i.pl.x} ${i.pl.y}) rotate(${i.pl.rot || 0})`;
-    return i.p.source === 'actor' ? `<ellipse transform="${t}" rx="${i.sz.w / 2}" ry="${i.sz.d / 2}" fill="${i.c}" fill-opacity=".3" stroke="${i.c}" stroke-width="${sw}"/>`
-      : `<rect transform="${t}" x="${-i.sz.w / 2}" y="${-i.sz.d / 2}" width="${i.sz.w}" height="${i.sz.d}" rx="${fs * .15}" fill="${i.c}" fill-opacity=".25" stroke="${i.c}" stroke-width="${sw}"/>`;
+    const sw = fs * .15, t = `translate(${i.pl.x} ${i.pl.y}) rotate(${i.pl.rot || 0})`, act = i.p.source === 'actor', fo = i.fo ?? (act ? .3 : .25);
+    const geo = act ? `<ellipse transform="${t}" rx="${i.sz.w / 2}" ry="${i.sz.d / 2}"` : `<rect transform="${t}" x="${-i.sz.w / 2}" y="${-i.sz.d / 2}" width="${i.sz.w}" height="${i.sz.d}" rx="${fs * .15}"`;
+    const dash = i.dash ? ` stroke-dasharray="${fs * .55} ${fs * .3}"` : '';
+    return `${geo} fill="${i.c}" fill-opacity="${fo}" stroke="${i.c}" stroke-width="${sw}"${dash}/>` + (i.hatch ? `${geo} fill="url(#${hid})" stroke="none"/>` : '');
   };
   g += order.map(k => shapeOf(items[k])).join('');
 
@@ -188,11 +200,12 @@ function build(D, ev, sc, mode) {
   }
   g += lines.join('') + labels.join('');
   const vb = [-m, -fs * 3.4, w + 2 * m, d + fs * 7.4];
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb.join(' ')}" font-family="${FONT}"><rect x="${vb[0]}" y="${vb[1]}" width="${vb[2]}" height="${vb[3]}" fill="#fff"/>${g}</svg>`;
+  const defs = items.some(i => i.hatch) ? `<defs><pattern id="${hid}" patternUnits="userSpaceOnUse" width="${fs * .45}" height="${fs * .45}" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="${fs * .45}" stroke="${pal('personal').c}" stroke-width="${fs * .09}"/></pattern></defs>` : '';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb.join(' ')}" font-family="${FONT}">${defs}<rect x="${vb[0]}" y="${vb[1]}" width="${vb[2]}" height="${vb[3]}" fill="#fff"/>${g}</svg>`;
   let legend = '';
   if (mode === 'num' || (mode === 'mix' && numItems.length)) {
     const cnt = {}; numItems.forEach(i => cnt[i.p.id] = (cnt[i.p.id] || 0) + 1);
-    legend = (mode === 'mix' ? `<div class="muted" style="margin-top:6px">圖中以編號標示的小道具（單獨、字放不下）：</div>` : '') + `<table><tr><th>編號</th><th>道具</th><th>類別</th><th>提供者</th><th>數量</th></tr>${[...nums.entries()].map(([id, n]) => { const p = P(id); return `<tr><td><span class="num" style="background:${SRC[p.source].color}">${n}</span></td><td>${esc(p.name)}</td><td>${SRC[p.source].label}</td><td>${esc(p.source === 'theatre' ? '劇場' : p.owner)}</td><td>${cnt[id]}</td></tr>`; }).join('')}</table>`;
+    legend = (mode === 'mix' ? `<div class="muted" style="margin-top:6px">圖中以編號標示的小道具（單獨、字放不下）：</div>` : '') + `<table><tr><th>編號</th><th>道具</th><th>類別</th><th>提供者</th><th>數量</th></tr>${[...nums.entries()].map(([id, n]) => { const p = P(id); return `<tr><td><span class="num" style="background:${pal(p.source).c}">${n}</span></td><td>${esc(p.name)}</td><td>${SRC[p.source].label}</td><td>${esc(p.source === 'theatre' ? '劇場' : p.owner)}</td><td>${cnt[id]}</td></tr>`; }).join('')}</table>`;
   }
   return svg + legend;
 }
@@ -215,7 +228,7 @@ function draw() {
   const ev = D.events.find(e => e.id === st.ev), sc = D.scenes.find(s => s.id === st.sc);
   if (!ev || !sc || !D.stages.find(s => s.id === ev.stageId)) { $('out').innerHTML = '<div class="card">沒有可顯示的場景。</div>'; return; }
   const modes = view === 'all' ? ['cur', 'out', 'num', 'fit', 'mix'] : [view];
-  $('out').className = 'grid' + (view === 'all' ? ' two' : '');
+  $('out').className = 'grid' + (view === 'all' ? ' two' : '') + (simBW ? ' bwsim' : '');
   $('out').innerHTML = modes.map((m, i) => `<div class="card${i && view !== 'all' ? ' pgb' : ''}"><h2>${TITLES[m][0]}</h2><div class="muted noprint">${TITLES[m][1]}</div>${build(D, ev, sc, m)}</div>`).join('');
 }
 $('src').innerHTML = '<option value="live">即時資料（唯讀）</option><option value="sample">範例一（很多小道具、長名字）</option><option value="sample2">範例二（道具疊在斜放的椅子上）</option>';
@@ -223,6 +236,8 @@ $('src').onchange = e => { st.src = e.target.value; D = st.src === 'live' && liv
 $('ev').onchange = e => { st.ev = e.target.value; st.sc = null; fill(); };
 $('sc').onchange = e => { st.sc = e.target.value; draw(); };
 $('views').onclick = e => { const b = e.target.closest('[data-v]'); if (b) { view = b.dataset.v; fill(); } };
+$('pal').onchange = e => { palette = e.target.value; draw(); };
+$('sim').onchange = e => { simBW = e.target.checked; draw(); };
 $('ctext').onchange = e => { colorText = e.target.checked; draw(); };
 $('print').onclick = () => window.print();
 function setStatus(msg) {

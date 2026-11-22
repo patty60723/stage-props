@@ -52,9 +52,9 @@ const ORDER = { theatre: 0, personal: 1, actor: 2 };
 const FONT = "system-ui,'Noto Sans TC','Microsoft JhengHei',sans-serif";
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const psize = p => p.source === 'actor' ? { w: .5, d: .5 } : { w: p.w, d: p.d };
-const VIEWS = [['all', '並排比較'], ['cur', '現況'], ['out', 'A 標籤外移'], ['num', 'B 編號＋圖例'], ['fit', 'C 縮字換行'], ['mix', 'D C＋B 混合']];
+const VIEWS = [['all', '並排比較'], ['cur', '現況'], ['out', 'A 標籤外移'], ['num', 'B 編號＋圖例'], ['fit', 'C 縮字換行'], ['mix', 'D 混合 v2']];
 const TITLES = { cur: ['現況', '放不下就截斷成「…」'], out: ['A　標籤外移', '放得進方塊就放裡面；放不下的移到旁邊，用細線連回道具'], num: ['B　編號＋圖例', '方塊內只放編號，名稱列在下方對照表（同一種道具共用編號）'], fit: ['C　縮字換行', '字級縮到剛好塞進方塊、必要時分兩行；仍太小才截斷'],
-  mix: ['D　C＋B 混合', '字塞得進（夠大、看得清）就直接寫名字；太小的才改標編號，只有這些小道具列在對照表'] };
+  mix: ['D　C＋B 混合（v2）', '寫得進就寫在裡面（斜放也會判斷）；單獨的小道具標編號；擠在一起或會被蓋住的，改移到旁邊加細線（A）'] };
 
 /* ---------- 範例資料（含很多小道具、長名字） ---------- */
 function sample() {
@@ -68,79 +68,128 @@ function sample() {
   return { stages: [{ id: 's', name: '示範舞台', w: 8, d: 6 }], props, events: [{ id: 'e', name: '範例事件', date: '2026-01-01', stageId: 's' }], scenes: [{ id: 'c', eventId: 'e', owner: '示範場景（很擠、名字很長）', title: '', t: 1, placements }] };
 }
 
+/* 範例二：仿真實案例——小舞台、道具疊在斜放的椅子上 */
+function sample2() {
+  const P = (id, name, source, owner, w, d) => ({ id, name, source, owner, w, d, notes: '' });
+  const props = [P('a', '軟坐墊軟背椅', 'theatre', '', .5, .5), P('b', '皮包', 'personal', 'Susanna', .5, .55), P('c', '手機', 'personal', 'Susanna', .15, .3), P('d', '捧花', 'personal', 'Susanna', .35, .3)];
+  const pl = (propId, x, y, rot, i) => ({ id: 'y' + i, propId, x, y, rot, t: i });
+  return { stages: [{ id: 's', name: '小舞台', w: 4, d: 3 }], props, events: [{ id: 'e', name: '範例二', date: '2026-01-01', stageId: 's' }],
+    scenes: [{ id: 'c', eventId: 'e', owner: '疊放示範', title: '', t: 1, placements: [pl('a', 1.7, .85, 45, 1), pl('b', 1.35, .8, 0, 2), pl('c', 1.95, .95, 12, 3), pl('d', 1.6, 1.3, -25, 4), pl('a', .9, 1.9, 45, 5)] }] };
+}
 /* ---------- 繪圖 ---------- */
 const aabb = (x, y, w, d, rot) => { const r = rot * Math.PI / 180, c = Math.abs(Math.cos(r)), s = Math.abs(Math.sin(r)); return { x, y, w: w * c + d * s, h: w * s + d * c }; };
 const hit = (a, b) => Math.abs(a.x - b.x) < (a.w + b.w) / 2 && Math.abs(a.y - b.y) < (a.h + b.h) / 2;
 const halo = fs => `paint-order="stroke" stroke="#fff" stroke-width="${fs * .28}" stroke-linejoin="round"`;
+/* 點是否落在道具的「實際形狀」內（會考慮旋轉；演員是橢圓） */
+function inShape(px, py, it) {
+  const r = -(it.pl.rot || 0) * Math.PI / 180, dx = px - it.pl.x, dy = py - it.pl.y, lx = dx * Math.cos(r) - dy * Math.sin(r), ly = dx * Math.sin(r) + dy * Math.cos(r);
+  return it.p.source === 'actor' ? (lx / (it.sz.w / 2)) ** 2 + (ly / (it.sz.d / 2)) ** 2 <= 1 : Math.abs(lx) <= it.sz.w / 2 && Math.abs(ly) <= it.sz.d / 2;
+}
+const rectInside = (it, bw, bh) => [[-1, -1], [1, -1], [-1, 1], [1, 1]].every(([sx, sy]) => inShape(it.pl.x + sx * bw / 2, it.pl.y + sy * bh / 2, it));
+function boxHitsShape(box, it) {                                // 文字框是否壓到某個道具
+  for (let a = 0; a <= 6; a++) for (let b = 0; b <= 2; b++) if (inShape(box.x - box.w / 2 + box.w * a / 6, box.y - box.h / 2 + box.h * b / 2, it)) return true;
+  const r = (it.pl.rot || 0) * Math.PI / 180, pts = [[0, 0], [-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sy]) => { const lx = sx * it.sz.w / 2, ly = sy * it.sz.d / 2; return [it.pl.x + lx * Math.cos(r) - ly * Math.sin(r), it.pl.y + lx * Math.sin(r) + ly * Math.cos(r)]; });
+  return pts.some(([qx, qy]) => Math.abs(qx - box.x) <= box.w / 2 && Math.abs(qy - box.y) <= box.h / 2);
+}
 function build(D, ev, sc, mode) {
   const st = D.stages.find(s => s.id === ev.stageId), P = id => D.props.find(p => p.id === id);
   const { w, d } = st, m = 0.9, fs = Math.max(w, d) * 0.025;
   const items = sc.placements.map(pl => ({ pl, p: P(pl.propId) })).filter(x => x.p).map(x => ({ ...x, sz: psize(x.p), c: SRC[x.p.source].color }));
-  const fitLabel = (i, b, minF) => {                        // 回傳 {lines, f}；縮到 minF 還塞不下則回傳 null
-    const W = Math.max(b.w, i.sz.w) * .94, H = Math.max(b.h, i.sz.d) * .94, ch = [...i.p.name], n = ch.length;
-    for (const rows of [1, 2, 3]) { const per = Math.ceil(n / rows), f = Math.min(fs, W / per, H / (rows * 1.15));
-      if (f >= minF) return { f, lines: Array.from({ length: rows }, (_, r) => ch.slice(r * per, (r + 1) * per).join('')).filter(Boolean) }; }
-    return null;
+  const boxes = items.map(i => aabb(i.pl.x, i.pl.y, i.sz.w, i.sz.d, i.pl.rot || 0));
+  const order = items.map((_, k) => k).sort((a, b) => items[b].sz.w * items[b].sz.d - items[a].sz.w * items[a].sz.d || a - b);   // 大的先畫，小的疊在上面
+  const rank = []; order.forEach((k, r) => rank[k] = r);
+  const lines = [], labels = [], textEl = (t, cx, cy, f) => `<text x="${cx}" y="${cy + f * .35}" font-size="${f}" text-anchor="middle" fill="#111827" ${halo(f)}>${esc(t)}</text>`;
+  const lw = (t, f) => [...t].length * f;
+  const bounds = ([px, py], W, H) => px - W / 2 > -m + .05 && px + W / 2 < w + m - .05 && py - H / 2 > -fs * .3 && py + H / 2 < d + fs * 1.9;
+  /* 把標籤放到道具旁邊：找一個不壓到別的標籤、也不壓到任何道具的位置 */
+  function placeOutside(k, name, placed) {
+    const b = boxes[k], x = items[k].pl.x, y = items[k].pl.y, H = fs * 1.35, W = lw(name, fs) + fs * .7, hw = b.w / 2, hh = b.h / 2, gap = fs * .5, c = [];
+    for (const kk of [1, 2, 3.4]) c.push([x + hw + gap * kk + W / 2, y], [x - hw - gap * kk - W / 2, y], [x, y - hh - gap * kk - H / 2], [x, y + hh + gap * kk + H / 2],
+      [x + hw + gap * kk + W / 2, y - hh - H * kk], [x - hw - gap * kk - W / 2, y - hh - H * kk], [x + hw + gap * kk + W / 2, y + hh + H * kk], [x - hw - gap * kk - W / 2, y + hh + H * kk]);
+    const free = q => bounds(q, W, H) && !placed.some(o => hit({ x: q[0], y: q[1], w: W, h: H }, o)) && !boxes.some(o => hit({ x: q[0], y: q[1], w: W, h: H }, o));
+    const q = c.find(free) || c.find(q => bounds(q, W, H) && !placed.some(o => hit({ x: q[0], y: q[1], w: W, h: H }, o))) || c.find(q => bounds(q, W, H)) || c[0];
+    return { q, W, H };
+  }
+  const drawOut = (k, q, W, H) => {
+    const i = items[k];
+    lines.push(`<line x1="${i.pl.x}" y1="${i.pl.y}" x2="${q[0]}" y2="${q[1]}" stroke="#374151" stroke-width="${fs * .1}"/><circle cx="${i.pl.x}" cy="${i.pl.y}" r="${fs * .22}" fill="#374151"/>`);
+    labels.push(`<rect x="${q[0] - W / 2}" y="${q[1] - H / 2}" width="${W}" height="${H}" rx="${fs * .2}" fill="#fff" fill-opacity=".95" stroke="${i.c}" stroke-width="${fs * .1}"/>` + textEl(i.p.name, q[0], q[1], fs));
   };
-  const MIXMIN = fs * .7;
-  const bx0 = items.map(i => aabb(i.pl.x, i.pl.y, i.sz.w, i.sz.d, i.pl.rot || 0));
-  const isSmall = items.map((i, k) => mode === 'mix' && !fitLabel(i, bx0[k], MIXMIN));
-  const numItems = mode === 'mix' ? items.filter((_, k) => isSmall[k]) : items;
+
+  /* ---- D 混合：先決定每個道具用「寫在裡面／編號／移到旁邊」 ---- */
+  const MIXMIN = fs * .7, plan = [];
+  if (mode === 'mix') {
+    const placed = [];
+    for (const k of order) {
+      const i = items[k], ch = [...i.p.name], n = ch.length, cand = [];
+      for (const rows of [1, 2, 3]) { const per = Math.ceil(n / rows); for (let f = fs; f >= MIXMIN - 1e-9; f *= .92) cand.push({ rows, per, f }); }
+      cand.sort((a, b) => b.f - a.f || a.rows - b.rows);
+      let pick = null;
+      for (const c of cand) {
+        const bw = c.per * c.f + c.f * .3, bh = c.rows * c.f * 1.15, box = { x: i.pl.x, y: i.pl.y, w: bw, h: bh };
+        if (!rectInside(i, bw, bh)) continue;                                       // 要放得進實際形狀（斜放也算）
+        if (placed.some(o => hit(box, o))) continue;                                // 不能壓到別人的標籤
+        if (items.some((o, j) => j !== k && rank[j] > rank[k] && boxHitsShape(box, o))) continue;   // 不能被疊在上面的小道具蓋住
+        pick = { ...c, box }; break;
+      }
+      if (pick) { plan[k] = { t: 'in', ...pick }; placed.push(pick.box); continue; }
+      const grown = { x: boxes[k].x, y: boxes[k].y, w: boxes[k].w + fs, h: boxes[k].h + fs };
+      const crowded = boxes.some((o, j) => j !== k && hit(grown, o));
+      if (!crowded) { const f = Math.min(fs * 1.1, Math.min(boxes[k].w, boxes[k].h) * .8); plan[k] = { t: 'num', f }; placed.push({ x: i.pl.x, y: i.pl.y, w: f * 1.3, h: f * 1.3 }); }
+      else plan[k] = { t: 'out' };                                                  // 擠在別人身上 → 移到旁邊加細線（A）
+    }
+    for (const k of order) if (plan[k].t === 'out') { const { q, W, H } = placeOutside(k, items[k].p.name, placed); plan[k].q = q; plan[k].W = W; plan[k].H = H; placed.push({ x: q[0], y: q[1], w: W, h: H }); }
+  }
+  const numItems = mode === 'mix' ? items.filter((_, k) => plan[k].t === 'num') : items;
   const nums = new Map(); [...new Map(numItems.map(i => [i.p.id, i.p])).values()].sort((a, b) => ORDER[a.source] - ORDER[b.source] || a.name.localeCompare(b.name, 'zh-Hant')).forEach((p, i) => nums.set(p.id, i + 1));
+
   let g = '';
   for (let i = 1; i < w; i++) g += `<line x1="${i}" y1="0" x2="${i}" y2="${d}" stroke="#e5e7eb" stroke-width="${fs * .08}"/>`;
   for (let j = 1; j < d; j++) g += `<line x1="0" y1="${j}" x2="${w}" y2="${j}" stroke="#e5e7eb" stroke-width="${fs * .08}"/>`;
   g += `<rect width="${w}" height="${d}" fill="none" stroke="#374151" stroke-width="${fs * .2}"/>`;
   g += `<text x="0" y="${-fs * .8}" font-size="${fs * 1.1}" font-weight="600" fill="#111827">${esc(ev.name)}　${esc(ev.date)}　<tspan fill="#7c3aed">${esc(sc.owner)}</tspan></text>`;
   g += `<text x="${w / 2}" y="${d + fs * 2.4}" font-size="${fs * 1.1}" fill="#6b7280" text-anchor="middle">▼ 觀眾席</text>`;
-  const boxes = items.map(i => aabb(i.pl.x, i.pl.y, i.sz.w, i.sz.d, i.pl.rot || 0));
-  const shapes = items.map(i => {
+  const shapeOf = i => {
     const sw = fs * .15, t = `translate(${i.pl.x} ${i.pl.y}) rotate(${i.pl.rot || 0})`;
     return i.p.source === 'actor' ? `<ellipse transform="${t}" rx="${i.sz.w / 2}" ry="${i.sz.d / 2}" fill="${i.c}" fill-opacity=".3" stroke="${i.c}" stroke-width="${sw}"/>`
       : `<rect transform="${t}" x="${-i.sz.w / 2}" y="${-i.sz.d / 2}" width="${i.sz.w}" height="${i.sz.d}" rx="${fs * .15}" fill="${i.c}" fill-opacity=".25" stroke="${i.c}" stroke-width="${sw}"/>`;
-  });
-  g += shapes.join('');
-  const lines = [], labels = [], lw = (t, f) => [...t].length * f;
-  items.forEach((i, k) => {
-    const { x, y } = i.pl, b = boxes[k], name = i.p.name, num = nums.get(i.p.id);
-    const text = (t, cx, cy, f, extra = '') => `<text x="${cx}" y="${cy + f * .35}" font-size="${f}" text-anchor="middle" fill="#111827" ${halo(f)} ${extra}>${esc(t)}</text>`;
-    if (mode === 'cur') {
+  };
+  g += order.map(k => shapeOf(items[k])).join('');
+
+  const outPlaced = [];
+  for (const k of order) {
+    const i = items[k], { x, y } = i.pl, b = boxes[k], name = i.p.name, num = nums.get(i.p.id);
+    if (mode === 'mix') {
+      const p = plan[k];
+      if (p.t === 'in') { const ch = [...name], ls = Array.from({ length: p.rows }, (_, r) => ch.slice(r * p.per, (r + 1) * p.per).join('')).filter(Boolean); labels.push(ls.map((l, r) => textEl(l, x, y + (r - (ls.length - 1) / 2) * p.f * 1.15, p.f)).join('')); }
+      else if (p.t === 'num') labels.push(textEl(String(num), x, y, p.f));
+      else drawOut(k, p.q, p.W, p.H);
+    } else if (mode === 'cur') {
       const maxc = Math.max(2, Math.floor(Math.max(i.sz.w, i.sz.d) / fs)), t = name.length > maxc ? name.slice(0, maxc - 1) + '…' : name;
-      labels.push(text(t, x, y, fs));
-    } else if (mode === 'num' || (mode === 'mix' && isSmall[k])) {
-      labels.push(text(String(num), x, y, Math.min(fs * 1.1, Math.min(b.w, b.h) * .8)));
-    } else if (mode === 'mix') {
-      const r = fitLabel(i, b, MIXMIN); labels.push(r.lines.map((l, q) => text(l, x, y + (q - (r.lines.length - 1) / 2) * r.f * 1.15, r.f)).join(''));
+      labels.push(textEl(t, x, y, fs));
+    } else if (mode === 'num') {
+      labels.push(textEl(String(num), x, y, Math.min(fs * 1.1, Math.min(b.w, b.h) * .8)));
     } else if (mode === 'fit') {
-      const W = Math.max(b.w, i.sz.w) * .94, H = Math.max(b.h, i.sz.d) * .94, n = [...name].length, minF = fs * .5;
-      let done = false;
+      const W = Math.max(b.w, i.sz.w) * .94, H = Math.max(b.h, i.sz.d) * .94, n = [...name].length, minF = fs * .5; let done = false;
       for (const rows of [1, 2, 3]) {
         const per = Math.ceil(n / rows), f = Math.min(fs, W / per, H / (rows * 1.15));
-        if (f >= minF) { const ch = [...name]; const ls = Array.from({ length: rows }, (_, r) => ch.slice(r * per, (r + 1) * per).join('')).filter(Boolean);
-          labels.push(ls.map((l, r) => text(l, x, y + (r - (ls.length - 1) / 2) * f * 1.15, f)).join('')); done = true; break; }
+        if (f >= minF) { const ch = [...name], ls = Array.from({ length: rows }, (_, r) => ch.slice(r * per, (r + 1) * per).join('')).filter(Boolean);
+          labels.push(ls.map((l, r) => textEl(l, x, y + (r - (ls.length - 1) / 2) * f * 1.15, f)).join('')); done = true; break; }
       }
-      if (!done) { const per = Math.max(1, Math.floor(W / minF)), t = n > per ? [...name].slice(0, per - 1).join('') + '…' : name; labels.push(text(t, x, y, minF)); }
-    } else { // out
+      if (!done) { const per = Math.max(1, Math.floor(W / minF)); labels.push(textEl(n > per ? [...name].slice(0, per - 1).join('') + '…' : name, x, y, minF)); }
+    } else { // A：放得進就放裡面，否則移到旁邊
       const L = lw(name, fs), H = fs * 1.35;
-      if (L <= b.w * .92 && H <= b.h) { labels.push(text(name, x, y, fs)); return; }
-      const hw = b.w / 2, hh = b.h / 2, gap = fs * .5, lwid = L + fs * .7, cands = [];
-      for (const kk of [1, 2.4]) cands.push([x + hw + gap * kk + lwid / 2, y], [x - hw - gap * kk - lwid / 2, y], [x, y - hh - gap * kk - H / 2], [x, y + hh + gap * kk + H / 2],
-        [x + hw + gap * kk + lwid / 2, y - hh - H * kk], [x - hw - gap * kk - lwid / 2, y - hh - H * kk], [x + hw + gap * kk + lwid / 2, y + hh + H * kk], [x - hw - gap * kk - lwid / 2, y + hh + H * kk]);
-      const ok = ([px, py]) => px - lwid / 2 > -m + .05 && px + lwid / 2 < w + m - .05 && py - H / 2 > -fs * .3 && py + H / 2 < d + fs * 1.9;
-      const free = c => ok(c) && !boxes.some(o => hit({ x: c[0], y: c[1], w: lwid, h: H }, o));
-      const [px, py] = cands.find(free) || cands.find(ok) || cands[0];
-      boxes.push({ x: px, y: py, w: lwid, h: H });
-      lines.push(`<line x1="${x}" y1="${y}" x2="${px}" y2="${py}" stroke="#6b7280" stroke-width="${fs * .08}"/>`);
-      labels.push(`<rect x="${px - lwid / 2}" y="${py - H / 2}" width="${lwid}" height="${H}" rx="${fs * .2}" fill="#fff" fill-opacity=".92" stroke="${i.c}" stroke-width="${fs * .08}"/>` + text(name, px, py, fs));
+      if (L <= b.w * .92 && H <= b.h) { labels.push(textEl(name, x, y, fs)); continue; }
+      const { q, W, H: HH } = placeOutside(k, name, outPlaced); outPlaced.push({ x: q[0], y: q[1], w: W, h: HH }); drawOut(k, q, W, HH);
     }
-  });
+  }
   g += lines.join('') + labels.join('');
   const vb = [-m, -fs * 3.4, w + 2 * m, d + fs * 7.4];
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb.join(' ')}" font-family="${FONT}"><rect x="${vb[0]}" y="${vb[1]}" width="${vb[2]}" height="${vb[3]}" fill="#fff"/>${g}</svg>`;
   let legend = '';
   if (mode === 'num' || (mode === 'mix' && numItems.length)) {
     const cnt = {}; numItems.forEach(i => cnt[i.p.id] = (cnt[i.p.id] || 0) + 1);
-    legend = (mode === 'mix' ? `<div class="muted" style="margin-top:6px">圖中以編號標示的小道具（字放不下）：${nums.size ? '' : '無'}</div>` : '') + `<table><tr><th>編號</th><th>道具</th><th>類別</th><th>提供者</th><th>數量</th></tr>${[...nums.entries()].map(([id, n]) => { const p = P(id); return `<tr><td><span class="num" style="background:${SRC[p.source].color}">${n}</span></td><td>${esc(p.name)}</td><td>${SRC[p.source].label}</td><td>${esc(p.source === 'theatre' ? '劇場' : p.owner)}</td><td>${cnt[id]}</td></tr>`; }).join('')}</table>`;
+    legend = (mode === 'mix' ? `<div class="muted" style="margin-top:6px">圖中以編號標示的小道具（單獨、字放不下）：</div>` : '') + `<table><tr><th>編號</th><th>道具</th><th>類別</th><th>提供者</th><th>數量</th></tr>${[...nums.entries()].map(([id, n]) => { const p = P(id); return `<tr><td><span class="num" style="background:${SRC[p.source].color}">${n}</span></td><td>${esc(p.name)}</td><td>${SRC[p.source].label}</td><td>${esc(p.source === 'theatre' ? '劇場' : p.owner)}</td><td>${cnt[id]}</td></tr>`; }).join('')}</table>`;
   }
   return svg + legend;
 }
@@ -166,14 +215,14 @@ function draw() {
   $('out').className = 'grid' + (view === 'all' ? ' two' : '');
   $('out').innerHTML = modes.map((m, i) => `<div class="card${i && view !== 'all' ? ' pgb' : ''}"><h2>${TITLES[m][0]}</h2><div class="muted noprint">${TITLES[m][1]}</div>${build(D, ev, sc, m)}</div>`).join('');
 }
-$('src').innerHTML = '<option value="live">即時資料（唯讀）</option><option value="sample">範例資料（含很小的道具）</option>';
-$('src').onchange = e => { st.src = e.target.value; D = st.src === 'live' && live ? live : sample(); setStatus(); fill(); };
+$('src').innerHTML = '<option value="live">即時資料（唯讀）</option><option value="sample">範例一（很多小道具、長名字）</option><option value="sample2">範例二（道具疊在斜放的椅子上）</option>';
+$('src').onchange = e => { st.src = e.target.value; D = st.src === 'live' && live ? live : st.src === 'sample2' ? sample2() : sample(); setStatus(); fill(); };
 $('ev').onchange = e => { st.ev = e.target.value; st.sc = null; fill(); };
 $('sc').onchange = e => { st.sc = e.target.value; draw(); };
 $('views').onclick = e => { const b = e.target.closest('[data-v]'); if (b) { view = b.dataset.v; fill(); } };
 $('print').onclick = () => window.print();
 function setStatus(msg) {
-  $('status').innerHTML = msg || (st.src === 'live' ? '目前顯示的是班級的<b>即時資料</b>（唯讀，這一頁不會修改它）。' : '目前顯示的是<b>範例資料</b>，內含很多小道具與長名字，方便比較。');
+  $('status').innerHTML = msg || (st.src === 'live' ? '目前顯示的是班級的<b>即時資料</b>（唯讀，這一頁不會修改它）。' : '目前顯示的是<b>範例資料</b>，用來比較各種標籤方式。');
 }
 
 /* 即時資料：沿用主網頁已儲存的班級代碼，只讀不寫 */

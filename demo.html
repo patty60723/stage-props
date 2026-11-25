@@ -36,6 +36,7 @@ th,td{text-align:left;padding:3px 8px;border-bottom:1px solid var(--line);font-s
 .sh-idx{font-size:12px;color:var(--mute)}
 .secrow td{background:#f3f4f6;font-size:12px;font-weight:600;color:#374151}
 .by{color:var(--mute);font-size:12px}
+.pchip.pick{cursor:pointer}
 .pchip{display:inline-block;border:1px solid var(--line);border-radius:99px;padding:2px 10px;margin:3px 4px 3px 0;font-size:13px;background:#fff}
 .vgroup{margin:10px 0}.vgroup h3{font-size:14px;margin:0 0 4px}
 .tag{background:#ede9fe;color:#6d28d9;border-radius:99px;padding:0 8px;font-size:12px}
@@ -76,9 +77,9 @@ table.plist .total td{border-top:2px solid #374151;background:#f9fafb;font-size:
 <div id="status" class="note noprint"></div>
 <div id="out" class="grid"></div>
 </main>
-<script src="firebase-config.js?v=202611251918"></script>
+<script src="firebase-config.js?v=202611251919"></script>
 <script type="module">
-import { fromDocs } from './diff.js?v=202611251918';
+import { fromDocs } from './diff.js?v=202611251919';
 const SRC = { theatre: { label: '劇場提供', color: '#3b82f6', text: '#1d4ed8' }, personal: { label: '個人提供', color: '#f59e0b', text: '#b45309' }, actor: { label: '演員', color: '#10b981', text: '#047857' } };
 /* 配色：彩色／黑白友善（三類在灰階下深淺差距大，個人提供另加虛線邊框＋斜線底紋，演員本來就是圓形） */
 const PAL = {
@@ -311,16 +312,20 @@ function sheetView(ev, sc) {
     (skipped.length ? `<div class="note">沒有道具的場景已略過：${skipped.map(x => esc(x.owner)).join('、')}　（勾選上方「包含沒有道具的場景」可保留）</div>` : '');
 }
 /* ---------- 劇場道具庫（依場地）預覽：劇場提供的道具綁定場地；stageId 空白＝通用（所有場地） ---------- */
-let showOther = false, copyFrom = '__none';
+let showOther = false, copyFrom = '__none', extra = [], pick = new Set(), fromV = '__all', pickMsg = '';
 const venueOf = p => p.stageId || '';
 function venueView(ev) {
-  const stg = id => D.stages.find(s => s.id === id), th = D.props.filter(p => p.source === 'theatre');
+  const stg = id => D.stages.find(s => s.id === id), th = [...D.props, ...extra].filter(p => p.source === 'theatre');
   const groups = [...D.stages.map(s => ({ id: s.id, name: s.name + `（${s.w}×${s.d} m）` })), { id: '', name: '通用（所有場地都可用）' }]
     .map(g => ({ ...g, list: th.filter(p => venueOf(p) === g.id) })).filter(g => g.list.length || g.id === '');
   const here = th.filter(p => venueOf(p) === ev.stageId || venueOf(p) === ''), other = th.filter(p => !here.includes(p));
   const chip = p => `<span class="pchip"><span class="dot" style="background:${pal('theatre').c}"></span>${esc(p.name)} <span class="muted">${p.w}×${p.d}</span></span>`;
   const lib = groups.map(g => `<div class="vgroup"><h3>${esc(g.name)}${g.id === ev.stageId ? ' <span class="tag">目前事件的場地</span>' : ''} <span class="muted">${g.list.length} 件</span></h3>${g.list.map(chip).join('') || '<span class="muted">（空的）</span>'}</div>`).join('');
   const src = [['__none', '不複製，從空白開始'], ...groups.filter(g => g.list.length).map(g => [g.id || '__common', `${g.id ? stg(g.id).name : '通用'}（${g.list.length} 件）`])];
+  const cand = th.filter(p => venueOf(p) !== ev.stageId && (fromV === '__all' || venueOf(p) === (fromV === '__common' ? '' : fromV)));
+  const vname = id => id ? stg(id).name : '通用';
+  const pickChip = p => `<label class="pchip pick"><input type="checkbox" data-pick="${p.id}"${pick.has(p.id) ? ' checked' : ''}> ${esc(p.name)} <span class="muted">${p.w}×${p.d}・${esc(vname(venueOf(p)))}</span></label>`;
+  const fromOpts = [['__all', '全部其他場地'], ...groups.filter(g => g.id !== ev.stageId && g.list.length).map(g => [g.id || '__common', g.id ? stg(g.id).name : '通用'])];
   const n = copyFrom === '__none' ? 0 : th.filter(p => venueOf(p) === (copyFrom === '__common' ? '' : copyFrom)).length;
   const unassigned = th.filter(p => venueOf(p) === '').length;
   return `<div class="muted" style="margin-bottom:8px">這是預覽，用範例或你的即時資料模擬，<b>不會修改任何資料</b>。</div>
@@ -333,12 +338,22 @@ function venueView(ev) {
     <label style="flex-direction:row;align-items:center;gap:6px;color:var(--ink)"><input type="checkbox" id="showOther"${showOther ? ' checked' : ''}> 同時顯示其他場地的劇場道具（${other.length} 件，預設隱藏）</label>
     ${showOther ? `<div style="margin:6px 0;opacity:.6">${other.map(chip).join('') || '<span class="muted">（沒有）</span>'}</div>` : ''}
     <div class="note" style="margin-top:8px">新事件選到同一個場地時，<b>這些道具直接可用，不需要複製</b>。</div></div>
-  <div class="card"><h2>3　新增場地時：可以從其他場地複製劇場道具</h2>
+  <div class="card"><h2>3　也可以只挑幾件，從其他場地複製到這個場地</h2>
+    <div class="muted">在道具庫（或排列時的「顯示其他場地」）勾選別的場地的劇場道具，複製到目前場地「${esc(stg(ev.stageId).name)}」。複製出來的是獨立的一份，之後改名、改尺寸不會影響原本那個。</div>
+    <label style="margin:8px 0">來源場地<select id="fromV">${fromOpts.map(([v, t]) => `<option value="${v}"${fromV === v ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select></label>
+    <div>${cand.map(pickChip).join('') || '<span class="muted">（沒有其他場地的劇場道具）</span>'}</div>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:8px"><button class="primary" id="doCopy"${pick.size ? '' : ' disabled'}>複製選取的 ${pick.size} 件到「${esc(stg(ev.stageId).name)}」</button><span class="muted">${esc(pickMsg)}</span></div>
+    <div class="muted" style="margin-top:6px">（預覽：複製只在這個畫面裡生效，換資料來源或重新整理就還原，不會改到真的資料。）</div></div>
+  <div class="card"><h2>4　新增場地時：可以從其他場地複製劇場道具</h2>
     <div class="grid2-demo"><label>場地名稱<input value="小劇場C（示範）" disabled></label><label>寬 × 深（公尺）<input value="5 × 3" disabled></label>
     <label>複製劇場道具自<select id="copyFrom">${src.map(([v, t]) => `<option value="${v}"${copyFrom === v ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select></label></div>
     <div class="note" style="margin-top:8px">${copyFrom === '__none' ? '新場地的劇場道具庫會是空的。' : `會把 <b>${n}</b> 件劇場道具複製到新場地（原場地的不會變）。`}</div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px"><button disabled>取消</button><button class="primary" disabled>新增場地（預覽，不會動作）</button></div></div>`;
 }
+document.addEventListener('change', e => { if (e.target.dataset.pick) { e.target.checked ? pick.add(e.target.dataset.pick) : pick.delete(e.target.dataset.pick); draw(); } if (e.target.id === 'fromV') { fromV = e.target.value; draw(); } });
+document.addEventListener('click', e => { if (e.target.id !== 'doCopy') return; const ev = D.events.find(x => x.id === st.ev); const all = [...D.props, ...extra];
+  let ok = 0, skip = 0; pick.forEach(id => { const p = all.find(x => x.id === id); if (!p) return; if (all.some(q => q.source === 'theatre' && q.name === p.name && (q.stageId || '') === ev.stageId)) { skip++; return; } extra.push({ ...p, id: 'cp' + Math.random().toString(36).slice(2, 7), stageId: ev.stageId }); ok++; });
+  pickMsg = `已複製 ${ok} 件` + (skip ? `，略過 ${skip} 件（這個場地已有同名道具）` : ''); pick.clear(); draw(); });
 document.addEventListener('change', e => { if (e.target.id === 'showOther') { showOther = e.target.checked; draw(); } if (e.target.id === 'copyFrom') { copyFrom = e.target.value; draw(); } });
 function draw() {
   const ev = D.events.find(e => e.id === st.ev), sc = D.scenes.find(s => s.id === st.sc);
@@ -353,7 +368,7 @@ function draw() {
   $('out').innerHTML = modes.map((m, i) => `<div class="card${i && view !== 'all' ? ' pgb' : ''}"><h2>${TITLES[m][0]}</h2><div class="muted noprint">${TITLES[m][1]}</div>${build(D, ev, sc, m)}</div>`).join('');
 }
 $('src').innerHTML = '<option value="live">即時資料（唯讀）</option><option value="sample">範例一（很多小道具、長名字）</option><option value="sample2">範例二（道具疊在斜放的椅子上）</option><option value="sample3">範例三（演員帶道具進場、有空場景）</option><option value="sample4">範例四（兩個場地的劇場道具庫）</option>';
-$('src').onchange = e => { st.src = e.target.value; D = st.src === 'live' && live ? live : st.src === 'sample2' ? sample2() : st.src === 'sample3' ? sample3() : st.src === 'sample4' ? sample4() : sample(); setStatus(); fill(); };
+$('src').onchange = e => { extra = []; pick.clear(); pickMsg = ''; st.src = e.target.value; D = st.src === 'live' && live ? live : st.src === 'sample2' ? sample2() : st.src === 'sample3' ? sample3() : st.src === 'sample4' ? sample4() : sample(); setStatus(); fill(); };
 $('ev').onchange = e => { st.ev = e.target.value; st.sc = null; fill(); };
 $('sc').onchange = e => { st.sc = e.target.value; draw(); };
 $('views').onclick = e => { const b = e.target.closest('[data-v]'); if (b) { view = b.dataset.v; fill(); } };
@@ -375,7 +390,7 @@ async function loadLive() {
   setStatus('讀取即時資料中…');
   const got = {}, data = { stages: [], props: [], events: [], scenes: [] };
   try {
-    const { connect } = await import('./sync.js?v=202611251918');
+    const { connect } = await import('./sync.js?v=202611251919');
     connect(cfg, code, {
       onData(name, docs) { data[name] = fromDocs(name, docs); got[name] = true; if (['stages', 'props', 'events', 'scenes'].every(k => got[k])) { live = data; if (st.src === 'live') { D = live; fill(); } } },
       onError(err) { console.error(err); setStatus('讀取即時資料失敗（' + esc(err.code || err.message) + '），改用範例資料。'); st.src = 'sample'; $('src').value = 'sample'; D = sample(); fill(); },

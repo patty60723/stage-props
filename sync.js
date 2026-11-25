@@ -2,7 +2,7 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, onSnapshot, setDoc, updateDoc, deleteDoc, deleteField }
   from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
-import { DEL } from './diff.js?v=202611251919';
+import { DEL } from './diff.js?v=202611251924';
 
 export function connect(config, code, h) {
   const app = initializeApp(config);

@@ -4,5 +4,5 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 V="${1:-$(date -u +%Y%m%d%H%M)}"
-sed -i -E "s#(\.(js|css))\?v=[0-9A-Za-z]+#\1?v=$V#g" index.html demo.html app.js sync.js
+sed -i -E "s#(\.(js|css))\?v=[0-9A-Za-z]+#\1?v=$V#g" index.html demo.html app.js sync.js beta/index.html beta/app.js
 echo "version -> $V"

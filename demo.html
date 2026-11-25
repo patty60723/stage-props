@@ -27,6 +27,17 @@ table{border-collapse:collapse;width:100%;margin-top:8px}
 th,td{text-align:left;padding:3px 8px;border-bottom:1px solid var(--line);font-size:13px}
 .num{display:inline-block;min-width:22px;text-align:center;border-radius:99px;color:#fff;padding:0 6px;font-size:12px}
 .note{background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:6px 10px;font-size:13px;margin-bottom:12px}
+@media screen{.sheet-side{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(280px,1fr);gap:18px;align-items:start}}
+.sheet-side{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(280px,1fr);gap:18px;align-items:start}
+@media (max-width:760px){.sheet-side{grid-template-columns:1fr}}
+.sh-name{font-size:24px;font-weight:700;color:#7c3aed;line-height:1.2}
+.sh-title{font-size:16px;font-weight:600}
+.sh-head{margin-bottom:8px}
+.sheetcard .sh-fig svg{margin-top:0}
+table.plist td,table.plist th{padding:4px 6px;vertical-align:middle}
+table.plist svg{width:22px;height:16px;margin:0;display:inline-block;vertical-align:middle}
+table.plist .r{text-align:right;width:56px}
+table.plist .total td{border-top:2px solid #374151;background:#f9fafb;font-size:13px}
 #out.bwsim svg,#out.bwsim .num{filter:grayscale(1)}
 @media print{body{background:#fff}.noprint{display:none!important}main{padding:0}.card{border:none;padding:0 0 12px}.pgb{break-before:page}}
 </style>
@@ -39,6 +50,7 @@ th,td{text-align:left;padding:3px 8px;border-bottom:1px solid var(--line);font-s
   <label>資料來源<select id="src"></select></label>
   <label>事件<select id="ev"></select></label>
   <label>場景<select id="sc"></select></label>
+  <label id="layoutWrap" hidden>版面<select id="layout"><option value="side">左右並排（圖＋右側清單）</option><option value="stack">上下排列（圖在上、清單在下）</option></select></label>
   <div><div class="muted" style="margin-bottom:2px">檢視</div><div class="views" id="views"></div></div>
   <label>配色<select id="pal"><option value="color">彩色</option><option value="bw">黑白友善</option></select></label>
   <label style="flex-direction:row;align-items:center;gap:6px;color:var(--ink)"><input type="checkbox" id="ctext" checked> 文字顏色依類別</label>
@@ -48,23 +60,23 @@ th,td{text-align:left;padding:3px 8px;border-bottom:1px solid var(--line);font-s
 <div id="status" class="note noprint"></div>
 <div id="out" class="grid"></div>
 </main>
-<script src="firebase-config.js?v=202611221446"></script>
+<script src="firebase-config.js?v=202611250448"></script>
 <script type="module">
-import { fromDocs } from './diff.js?v=202611221446';
+import { fromDocs } from './diff.js?v=202611250448';
 const SRC = { theatre: { label: '劇場提供', color: '#3b82f6', text: '#1d4ed8' }, personal: { label: '個人提供', color: '#f59e0b', text: '#b45309' }, actor: { label: '演員', color: '#10b981', text: '#047857' } };
 /* 配色：彩色／黑白友善（三類在灰階下深淺差距大，個人提供另加虛線邊框＋斜線底紋，演員本來就是圓形） */
 const PAL = {
   color: { theatre: { c: '#3b82f6', t: '#1d4ed8' }, personal: { c: '#f59e0b', t: '#b45309' }, actor: { c: '#10b981', t: '#047857' } },
-  bw: { theatre: { c: '#1e3a8a', t: '#0b1b4d', fo: .3 }, personal: { c: '#c2410c', t: '#9a3412', fo: .1, dash: true, hatch: true }, actor: { c: '#16a34a', t: '#14532d', fo: .25 } },
+  bw: { theatre: { c: '#3b82f6', t: '#1e40af', fo: .25 }, personal: { c: '#c2410c', t: '#9a3412', fo: .1, dash: true, hatch: true }, actor: { c: '#16a34a', t: '#14532d', fo: .25 } },
 };
-let palette = 'color', hcount = 0, simBW = false;
+let palette = 'bw', hcount = 0, simBW = false;
 const pal = src => PAL[palette][src];
 let colorText = true;   // 文字顏色依類別（劇場藍／個人橘／演員綠）
 const ORDER = { theatre: 0, personal: 1, actor: 2 };
 const FONT = "system-ui,'Noto Sans TC','Microsoft JhengHei',sans-serif";
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const psize = p => p.source === 'actor' ? { w: .5, d: .5 } : { w: p.w, d: p.d };
-const VIEWS = [['all', '並排比較'], ['cur', '現況'], ['out', 'A 標籤外移'], ['num', 'B 編號＋圖例'], ['fit', 'C 縮字換行'], ['mix', 'D 混合 v2']];
+const VIEWS = [['all', '並排比較'], ['cur', '現況'], ['out', 'A 標籤外移'], ['num', 'B 編號＋圖例'], ['fit', 'C 縮字換行'], ['mix', 'D 混合 v2'], ['sheet', '輸出版面預覽（含道具清單）']];
 const TITLES = { cur: ['現況', '放不下就截斷成「…」'], out: ['A　標籤外移', '放得進方塊就放裡面；放不下的移到旁邊，用細線連回道具'], num: ['B　編號＋圖例', '方塊內只放編號，名稱列在下方對照表（同一種道具共用編號）'], fit: ['C　縮字換行', '字級縮到剛好塞進方塊、必要時分兩行；仍太小才截斷'],
   mix: ['D　C＋B 混合（v2）', '寫得進就寫在裡面（斜放也會判斷）；單獨的小道具標編號；擠在一起或會被蓋住的，改移到旁邊加細線（A）'] };
 
@@ -155,6 +167,7 @@ function build(D, ev, sc, mode) {
   }
   const numItems = mode === 'mix' ? items.filter((_, k) => plan[k].t === 'num') : items;
   const nums = new Map(); [...new Map(numItems.map(i => [i.p.id, i.p])).values()].sort((a, b) => ORDER[a.source] - ORDER[b.source] || a.name.localeCompare(b.name, 'zh-Hant')).forEach((p, i) => nums.set(p.id, i + 1));
+  build.last = { nums };
 
   let g = '';
   for (let i = 1; i < w; i++) g += `<line x1="${i}" y1="0" x2="${i}" y2="${d}" stroke="#e5e7eb" stroke-width="${fs * .08}"/>`;
@@ -224,9 +237,28 @@ function fill() {
   $('views').innerHTML = VIEWS.map(([k, l]) => `<button data-v="${k}" class="${view === k ? 'on' : ''}">${l}</button>`).join('');
   draw();
 }
+/* ---------- 輸出版面預覽：俯視圖＋場景名稱＋道具清單與數量 ---------- */
+const swatch = p => { const c = pal(p.source).c, o = pal(p.source).fo ?? .25;
+  return p.source === 'actor' ? `<svg width="22" height="16" viewBox="0 0 22 16"><circle cx="11" cy="8" r="6.5" fill="${c}" fill-opacity="${o + .05}" stroke="${c}" stroke-width="1.6"/></svg>`
+    : p.source === 'personal' ? `<svg width="22" height="16" viewBox="0 0 22 16"><rect x="2" y="2" width="18" height="12" rx="2" fill="${c}" fill-opacity="${o}" stroke="${c}" stroke-width="1.6" stroke-dasharray="4 2.4"/><path d="M6 14 14 2M11 14 19 2M3 10 9 2" stroke="${c}" stroke-width="1"/></svg>`
+    : `<svg width="22" height="16" viewBox="0 0 22 16"><rect x="2" y="2" width="18" height="12" rx="2" fill="${c}" fill-opacity="${o}" stroke="${c}" stroke-width="1.6"/></svg>`; };
+function sheetHTML(ev, sc, layout) {
+  const out = build(D, ev, sc, 'mix'), svg = out.slice(0, out.indexOf('</svg>') + 6), nums = build.last.nums, P = id => D.props.find(p => p.id === id);
+  const stg = D.stages.find(s => s.id === ev.stageId), cnt = new Map();
+  sc.placements.forEach(pl => { const p = P(pl.propId); if (p) cnt.set(p.id, (cnt.get(p.id) || 0) + 1); });
+  const rows = [...cnt.entries()].map(([id, n]) => ({ p: P(id), n })).sort((a, b) => ORDER[a.p.source] - ORDER[b.p.source] || a.p.name.localeCompare(b.p.name, 'zh-Hant'));
+  const total = rows.reduce((a, r) => a + r.n, 0), sub = Object.keys(SRC).map(k => [k, rows.filter(r => r.p.source === k).reduce((a, r) => a + r.n, 0)]).filter(x => x[1]);
+  const table = `<table class="plist"><tr><th></th><th>編號</th><th>道具</th><th>提供者</th><th class="r">數量</th></tr>${rows.map(({ p, n }) => `<tr><td>${swatch(p)}</td><td>${nums.has(p.id) ? `<span class="num" style="background:${pal(p.source).c}">${nums.get(p.id)}</span>` : ''}</td><td>${esc(p.name)}</td><td>${esc(p.source === 'theatre' ? '劇場' : p.owner)}</td><td class="r"><b>${n}</b></td></tr>`).join('')}<tr class="total"><td colspan="4">合計　${sub.map(([k, n]) => SRC[k].label + ' ' + n).join('・')}</td><td class="r"><b>${total}</b></td></tr></table>`;
+  const head = `<div class="sh-head"><div class="sh-name">${esc(sc.owner)}</div>${sc.title ? `<div class="sh-title">${esc(sc.title)}</div>` : ''}<div class="muted">${esc(ev.name)}・${esc(ev.date || '')}・${esc(stg.name)} ${stg.w}×${stg.d} m</div></div>`;
+  return `<div class="card sheetcard sheet-${layout}">${layout === 'side' ? `<div class="sh-fig">${svg}</div><div class="sh-side">${head}${table}</div>` : `${head}<div class="sh-fig">${svg}</div>${table}`}</div>`;
+}
 function draw() {
   const ev = D.events.find(e => e.id === st.ev), sc = D.scenes.find(s => s.id === st.sc);
   if (!ev || !sc || !D.stages.find(s => s.id === ev.stageId)) { $('out').innerHTML = '<div class="card">沒有可顯示的場景。</div>'; return; }
+  $('layoutWrap').hidden = view !== 'sheet';
+  let pg = document.getElementById('pgstyle'); if (!pg) { pg = document.createElement('style'); pg.id = 'pgstyle'; document.head.appendChild(pg); }
+  pg.textContent = view === 'sheet' ? `@page{size:A4 ${$('layout').value === 'side' ? 'landscape' : 'portrait'};margin:10mm}` : '';
+  if (view === 'sheet') { $('out').className = 'grid' + (simBW ? ' bwsim' : ''); $('out').innerHTML = sheetHTML(ev, sc, $('layout').value); return; }
   const modes = view === 'all' ? ['cur', 'out', 'num', 'fit', 'mix'] : [view];
   $('out').className = 'grid' + (view === 'all' ? ' two' : '') + (simBW ? ' bwsim' : '');
   $('out').innerHTML = modes.map((m, i) => `<div class="card${i && view !== 'all' ? ' pgb' : ''}"><h2>${TITLES[m][0]}</h2><div class="muted noprint">${TITLES[m][1]}</div>${build(D, ev, sc, m)}</div>`).join('');
@@ -236,9 +268,11 @@ $('src').onchange = e => { st.src = e.target.value; D = st.src === 'live' && liv
 $('ev').onchange = e => { st.ev = e.target.value; st.sc = null; fill(); };
 $('sc').onchange = e => { st.sc = e.target.value; draw(); };
 $('views').onclick = e => { const b = e.target.closest('[data-v]'); if (b) { view = b.dataset.v; fill(); } };
+$('pal').value = palette;
 $('pal').onchange = e => { palette = e.target.value; draw(); };
 $('sim').onchange = e => { simBW = e.target.checked; draw(); };
 $('ctext').onchange = e => { colorText = e.target.checked; draw(); };
+$('layout').onchange = draw;
 $('print').onclick = () => window.print();
 function setStatus(msg) {
   $('status').innerHTML = msg || (st.src === 'live' ? '目前顯示的是班級的<b>即時資料</b>（唯讀，這一頁不會修改它）。' : '目前顯示的是<b>範例資料</b>，用來比較各種標籤方式。');
@@ -252,7 +286,7 @@ async function loadLive() {
   setStatus('讀取即時資料中…');
   const got = {}, data = { stages: [], props: [], events: [], scenes: [] };
   try {
-    const { connect } = await import('./sync.js?v=202611221446');
+    const { connect } = await import('./sync.js?v=202611250448');
     connect(cfg, code, {
       onData(name, docs) { data[name] = fromDocs(name, docs); got[name] = true; if (['stages', 'props', 'events', 'scenes'].every(k => got[k])) { live = data; if (st.src === 'live') { D = live; fill(); } } },
       onError(err) { console.error(err); setStatus('讀取即時資料失敗（' + esc(err.code || err.message) + '），改用範例資料。'); st.src = 'sample'; $('src').value = 'sample'; D = sample(); fill(); },

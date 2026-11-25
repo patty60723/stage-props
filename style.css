@@ -86,3 +86,14 @@ details.card>summary{cursor:pointer;font-weight:600;list-style:revert}
 .palsel select{padding:2px 6px;font-size:13px}
 .numtbl{margin-top:4px}
 @media print{svg,.dot,.tag{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+
+.sheetrow{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(240px,1fr);gap:18px;align-items:start;margin-bottom:18px}
+@media (max-width:760px){.sheetrow{grid-template-columns:1fr}}
+.sh-name{font-size:24px;font-weight:700;color:#7c3aed;line-height:1.2}
+.sh-title{font-size:16px;font-weight:600}
+.sh-head{margin-bottom:8px}
+table.plist td,table.plist th{padding:4px 6px;vertical-align:middle}
+table.plist .r{text-align:right;width:56px}
+table.plist .total td{border-top:2px solid #374151;background:#f9fafb;font-size:13px}
+@page{size:A4 landscape;margin:10mm}
+@media print{.sheetrow{grid-template-columns:1.6fr 1fr;break-inside:avoid;margin-bottom:10px}}

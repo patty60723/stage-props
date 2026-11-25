@@ -95,6 +95,9 @@ details.card>summary{cursor:pointer;font-weight:600;list-style:revert}
 table.plist td,table.plist th{padding:4px 6px;vertical-align:middle}
 table.plist .r{text-align:right;width:56px}
 table.plist .total td{border-top:2px solid #374151;background:#f9fafb;font-size:13px}
-@page{size:A4 landscape;margin:10mm}
 @media print{.sheetrow{grid-template-columns:1.6fr 1fr;break-inside:avoid;margin-bottom:10px}}
-@media print{.sheetrow.compact .sh-fig svg{height:84mm;width:100%}}   /* 沒勾「每人一頁」：縮小俯視圖，一頁可放兩個人 */
+@media print{
+  .sheet .pg:not(.sheetrow){break-inside:auto}              /* 總清單很長時可以跨頁，不要整個被推到下一頁 */
+  .sheet thead{display:table-header-group}                    /* 跨頁時每頁重複表頭 */
+  .sheet tr{break-inside:avoid}
+}

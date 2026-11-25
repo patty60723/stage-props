@@ -467,7 +467,7 @@ function rowsFor(scs) {
   }
   return [...map.values()].sort((a, b) => ORDER[a.p.source] - ORDER[b.p.source] || ownerKey(a.p).localeCompare(ownerKey(b.p), 'zh-Hant') || a.p.name.localeCompare(b.p.name, 'zh-Hant'));
 }
-const tableHTML = (rows, users, nm) => rows.length ? `<table><tr>${nm ? '<th>編號</th>' : ''}<th>道具</th><th>類別</th><th>提供者</th><th>尺寸 (m)</th><th>數量</th>${users ? '<th>使用場景</th>' : ''}</tr>${rows.map(({ p, n, users: u }) => `<tr>${nm ? `<td>${nm.has(p.id) ? numBadge(nm.get(p.id), p) : '—'}</td>` : ''}<td>${esc(p.name)}</td><td>${SRC[p.source].label}</td><td>${esc(ownerKey(p))}</td><td>${sizeText(p)}</td><td>${n}</td>${users ? `<td>${esc([...u].join('、'))}</td>` : ''}</tr>`).join('')}</table>` : '<div class="muted">（沒有道具）</div>';
+const tableHTML = (rows, users, nm) => rows.length ? `<table><thead><tr>${nm ? '<th>編號</th>' : ''}<th>道具</th><th>類別</th><th>提供者</th><th>尺寸 (m)</th><th>數量</th>${users ? '<th>使用場景</th>' : ''}</tr></thead><tbody>${rows.map(({ p, n, users: u }) => `<tr>${nm ? `<td>${nm.has(p.id) ? numBadge(nm.get(p.id), p) : '—'}</td>` : ''}<td>${esc(p.name)}</td><td>${SRC[p.source].label}</td><td>${esc(ownerKey(p))}</td><td>${sizeText(p)}</td><td>${n}</td>${users ? `<td>${esc([...u].join('、'))}</td>` : ''}</tr>`).join('')}</tbody></table>` : '<div class="muted">（沒有道具）</div>';
 /* 輸出：左邊俯視圖，右邊是場景名稱＋這個人的道具清單與數量（有標編號的小道具會多一欄編號） */
 const sceneSheet = (ev, sc, brk, compact) => {
   const parts = stageParts(ev, sc), rows = rowsFor([sc]), total = rows.reduce((a, r) => a + r.n, 0), hasNum = parts.numMap.size > 0;
@@ -484,8 +484,9 @@ function renderOutput() {
   let body;
   if (!scs.length) body = '<div class="muted">這個事件還沒有場景。</div>';
   else if (!all) body = sceneSheet(ev, one, false);
-  else body = `<div class="pg"><h2>全班道具總清單</h2>${tableHTML(rowsFor(scs), true)}</div>` +
-    scs.map(x => sceneSheet(ev, x, ui.group, !ui.group)).join('');
+  else { const filled = scs.filter(x => x.placements.length), blank = scs.filter(x => !x.placements.length);
+    body = `<div class="pg"><h2>全班道具總清單</h2>${tableHTML(rowsFor(scs), true)}${blank.length ? `<div class="muted" style="margin-top:6px">尚未排道具：${blank.map(x => esc(x.owner || '（未命名）')).join('、')}</div>` : ''}</div>` +
+      filled.map(x => sceneSheet(ev, x, ui.group)).join(''); }
   return `<div class="card no-print"><div class="toolbar">
     <label>顯示：<select id="sceneSel"><option value="__all">全班（總清單）</option>${scs.map(x => `<option value="${x.id}"${x.id === ui.outScene ? ' selected' : ''}>${esc(sceneLabel(x))}</option>`).join('')}</select></label>
     ${all ? `<label><input type="checkbox" id="groupChk"${ui.group ? ' checked' : ''}> 每人一頁（各自俯視圖＋清單）</label>` : ''}
@@ -727,7 +728,7 @@ async function boot() {
   lsSet(CODE_KEY, code); cloud.code = code; renderHeader();
   window.addEventListener('online', renderHeader); window.addEventListener('offline', renderHeader);
   try {
-    const [api, diff] = await Promise.all([import('./sync.js?v=202611250456'), import('./diff.js?v=202611250456')]);
+    const [api, diff] = await Promise.all([import('./sync.js?v=202611250458'), import('./diff.js?v=202611250458')]);
     cloud.diff = diff; cloud.api = api.connect(CFG, code, { onData, onError });
     setTimeout(() => { cloud.giveUp = true; if (cloud.ok) { render(); return; } if (!cloud.err) { cloud.err = '連線逾時：請確認 Firebase 已建立 Firestore Database（位置選 asia-east1）、規則已發布，且網路沒有擋 firestore.googleapis.com'; render(); } }, 12000);
   } catch (e) { onError(e); }

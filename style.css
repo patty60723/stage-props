@@ -97,3 +97,4 @@ table.plist .r{text-align:right;width:56px}
 table.plist .total td{border-top:2px solid #374151;background:#f9fafb;font-size:13px}
 @page{size:A4 landscape;margin:10mm}
 @media print{.sheetrow{grid-template-columns:1.6fr 1fr;break-inside:avoid;margin-bottom:10px}}
+@media print{.sheetrow.compact .sh-fig svg{height:84mm;width:100%}}   /* 沒勾「每人一頁」：縮小俯視圖，一頁可放兩個人 */

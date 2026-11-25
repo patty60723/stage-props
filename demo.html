@@ -60,9 +60,9 @@ table.plist .total td{border-top:2px solid #374151;background:#f9fafb;font-size:
 <div id="status" class="note noprint"></div>
 <div id="out" class="grid"></div>
 </main>
-<script src="firebase-config.js?v=202611250452"></script>
+<script src="firebase-config.js?v=202611250456"></script>
 <script type="module">
-import { fromDocs } from './diff.js?v=202611250452';
+import { fromDocs } from './diff.js?v=202611250456';
 const SRC = { theatre: { label: '劇場提供', color: '#3b82f6', text: '#1d4ed8' }, personal: { label: '個人提供', color: '#f59e0b', text: '#b45309' }, actor: { label: '演員', color: '#10b981', text: '#047857' } };
 /* 配色：彩色／黑白友善（三類在灰階下深淺差距大，個人提供另加虛線邊框＋斜線底紋，演員本來就是圓形） */
 const PAL = {
@@ -286,7 +286,7 @@ async function loadLive() {
   setStatus('讀取即時資料中…');
   const got = {}, data = { stages: [], props: [], events: [], scenes: [] };
   try {
-    const { connect } = await import('./sync.js?v=202611250452');
+    const { connect } = await import('./sync.js?v=202611250456');
     connect(cfg, code, {
       onData(name, docs) { data[name] = fromDocs(name, docs); got[name] = true; if (['stages', 'props', 'events', 'scenes'].every(k => got[k])) { live = data; if (st.src === 'live') { D = live; fill(); } } },
       onError(err) { console.error(err); setStatus('讀取即時資料失敗（' + esc(err.code || err.message) + '），改用範例資料。'); st.src = 'sample'; $('src').value = 'sample'; D = sample(); fill(); },

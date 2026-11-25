@@ -469,11 +469,11 @@ function rowsFor(scs) {
 }
 const tableHTML = (rows, users, nm) => rows.length ? `<table><tr>${nm ? '<th>編號</th>' : ''}<th>道具</th><th>類別</th><th>提供者</th><th>尺寸 (m)</th><th>數量</th>${users ? '<th>使用場景</th>' : ''}</tr>${rows.map(({ p, n, users: u }) => `<tr>${nm ? `<td>${nm.has(p.id) ? numBadge(nm.get(p.id), p) : '—'}</td>` : ''}<td>${esc(p.name)}</td><td>${SRC[p.source].label}</td><td>${esc(ownerKey(p))}</td><td>${sizeText(p)}</td><td>${n}</td>${users ? `<td>${esc([...u].join('、'))}</td>` : ''}</tr>`).join('')}</table>` : '<div class="muted">（沒有道具）</div>';
 /* 輸出：左邊俯視圖，右邊是場景名稱＋這個人的道具清單與數量（有標編號的小道具會多一欄編號） */
-const sceneSheet = (ev, sc, brk) => {
+const sceneSheet = (ev, sc, brk, compact) => {
   const parts = stageParts(ev, sc), rows = rowsFor([sc]), total = rows.reduce((a, r) => a + r.n, 0), hasNum = parts.numMap.size > 0;
   const sub = Object.keys(SRC).map(k => [k, rows.filter(r => r.p.source === k).reduce((a, r) => a + r.n, 0)]).filter(x => x[1]);
   const table = rows.length ? `<table class="plist"><tr>${hasNum ? '<th>編號</th>' : ''}<th>道具</th><th>提供者</th><th class="r">數量</th></tr>${rows.map(({ p, n }) => `<tr>${hasNum ? `<td>${parts.numMap.has(p.id) ? numBadge(parts.numMap.get(p.id), p) : ''}</td>` : ''}<td>${esc(p.name)}</td><td>${esc(p.source === 'theatre' ? '劇場' : p.owner)}</td><td class="r"><b>${n}</b></td></tr>`).join('')}<tr class="total"><td colspan="${hasNum ? 3 : 2}">合計　${sub.map(([k, n]) => SRC[k].label + ' ' + n).join('・')}</td><td class="r"><b>${total}</b></td></tr></table>` : '<div class="muted">（沒有道具）</div>';
-  return `<div class="pg sheetrow${brk ? ' pg-break' : ''}"><div class="sh-fig">${parts.svg}</div><div class="sh-side"><div class="sh-head"><div class="sh-name">${esc(sc.owner || '（未命名）')}</div>${sc.title ? `<div class="sh-title">${esc(sc.title)}</div>` : ''}</div>${table}</div></div>`;
+  return `<div class="pg sheetrow${brk ? ' pg-break' : ''}${compact ? ' compact' : ''}"><div class="sh-fig">${parts.svg}</div><div class="sh-side"><div class="sh-head"><div class="sh-name">${esc(sc.owner || '（未命名）')}</div>${sc.title ? `<div class="sh-title">${esc(sc.title)}</div>` : ''}</div>${table}</div></div>`;
 };
 function renderOutput() {
   const ev = curEvent();
@@ -485,7 +485,7 @@ function renderOutput() {
   if (!scs.length) body = '<div class="muted">這個事件還沒有場景。</div>';
   else if (!all) body = sceneSheet(ev, one, false);
   else body = `<div class="pg"><h2>全班道具總清單</h2>${tableHTML(rowsFor(scs), true)}</div>` +
-    scs.map(x => sceneSheet(ev, x, ui.group)).join('');
+    scs.map(x => sceneSheet(ev, x, ui.group, !ui.group)).join('');
   return `<div class="card no-print"><div class="toolbar">
     <label>顯示：<select id="sceneSel"><option value="__all">全班（總清單）</option>${scs.map(x => `<option value="${x.id}"${x.id === ui.outScene ? ' selected' : ''}>${esc(sceneLabel(x))}</option>`).join('')}</select></label>
     ${all ? `<label><input type="checkbox" id="groupChk"${ui.group ? ' checked' : ''}> 每人一頁（各自俯視圖＋清單）</label>` : ''}
@@ -727,7 +727,7 @@ async function boot() {
   lsSet(CODE_KEY, code); cloud.code = code; renderHeader();
   window.addEventListener('online', renderHeader); window.addEventListener('offline', renderHeader);
   try {
-    const [api, diff] = await Promise.all([import('./sync.js?v=202611250452'), import('./diff.js?v=202611250452')]);
+    const [api, diff] = await Promise.all([import('./sync.js?v=202611250456'), import('./diff.js?v=202611250456')]);
     cloud.diff = diff; cloud.api = api.connect(CFG, code, { onData, onError });
     setTimeout(() => { cloud.giveUp = true; if (cloud.ok) { render(); return; } if (!cloud.err) { cloud.err = '連線逾時：請確認 Firebase 已建立 Firestore Database（位置選 asia-east1）、規則已發布，且網路沒有擋 firestore.googleapis.com'; render(); } }, 12000);
   } catch (e) { onError(e); }
